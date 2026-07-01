@@ -9,9 +9,37 @@ import BarcodeScanner from './components/BarcodeScanner';
 import AddProductModal from './components/AddProductModal';
 
 export default function App() {
+  const getInitialTab = () => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('tab') || 'dashboard';
+  };
+
   // Navigation & auth state
   const [token, setToken] = useState('bypass'); // Auto-auth session
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(getInitialTab());
+
+  const navigate = (tabName) => {
+    setActiveTab(tabName);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') !== tabName) {
+      window.history.pushState({ tab: tabName }, '', `?tab=${tabName}`);
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = (e) => {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab') || 'dashboard';
+      setActiveTab(tab);
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    const initialTab = params.get('tab') || 'dashboard';
+    window.history.replaceState({ tab: initialTab }, '', `?tab=${initialTab}`);
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
   
   // App core data state
   const [products, setProducts] = useState([]);
@@ -210,7 +238,7 @@ export default function App() {
       });
       if (res.ok) {
         setShowResetConfirm(false);
-        setActiveTab('dashboard');
+        navigate('dashboard');
         fetchDashboardData();
         fetchSuppliers();
         fetchPurchaseOrders();
@@ -569,7 +597,7 @@ export default function App() {
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-dark)' }}>Total assets at cost</div>
         </div>
-        <div className="glass-card" style={{ borderLeft: '4px solid var(--warning)' }} onClick={() => setActiveTab('alerts')} style={{ cursor: 'pointer', borderLeft: '4px solid var(--warning)' }}>
+        <div className="glass-card" style={{ borderLeft: '4px solid var(--warning)', cursor: 'pointer' }} onClick={() => navigate('alerts')}>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>LOW STOCK ALERTS</div>
           <div style={{ fontSize: '28px', fontWeight: 'bold', color: summary.lowStockCount > 0 ? 'var(--warning)' : 'var(--text-main)', margin: '4px 0' }}>
             {summary.lowStockCount}
@@ -1212,27 +1240,27 @@ export default function App() {
             <span className="sidebar-logo-text" style={{ fontSize: '18px', fontWeight: 'bold' }}>Stockwise HQ</span>
           </div>
           <div className="sidebar-menu">
-            <button className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+            <button className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')}>
               <LayoutDashboard size={18} /> 
               <span className="sidebar-text">Dashboard</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => setActiveTab('catalog')}>
+            <button className={`sidebar-item ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => navigate('catalog')}>
               <Package size={18} /> 
               <span className="sidebar-text">Products Catalog</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'pos' ? 'active' : ''}`} onClick={() => setActiveTab('pos')}>
+            <button className={`sidebar-item ${activeTab === 'pos' ? 'active' : ''}`} onClick={() => navigate('pos')}>
               <ShoppingBag size={18} /> 
               <span className="sidebar-text">POS Billing</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>
+            <button className={`sidebar-item ${activeTab === 'po' ? 'active' : ''}`} onClick={() => navigate('po')}>
               <Truck size={18} /> 
               <span className="sidebar-text">Purchase Orders</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'ledger' ? 'active' : ''}`} onClick={() => setActiveTab('ledger')}>
+            <button className={`sidebar-item ${activeTab === 'ledger' ? 'active' : ''}`} onClick={() => navigate('ledger')}>
               <History size={18} /> 
               <span className="sidebar-text">Ledger Logs</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'alerts' ? 'active' : ''}`} onClick={() => setActiveTab('alerts')}>
+            <button className={`sidebar-item ${activeTab === 'alerts' ? 'active' : ''}`} onClick={() => navigate('alerts')}>
               <ShieldAlert size={18} /> 
               <span className="sidebar-text">Stock Alerts</span>
               {summary.lowStockCount > 0 ? (
@@ -1241,23 +1269,23 @@ export default function App() {
                 </span>
               ) : null}
             </button>
-            <button className={`sidebar-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+            <button className={`sidebar-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')}>
               <TrendingUp size={18} /> 
               <span className="sidebar-text">Analytics</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'partners' ? 'active' : ''}`} onClick={() => setActiveTab('partners')}>
+            <button className={`sidebar-item ${activeTab === 'partners' ? 'active' : ''}`} onClick={() => navigate('partners')}>
               <Users2 size={18} /> 
               <span className="sidebar-text">Partners & Tags</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => setActiveTab('audit')}>
+            <button className={`sidebar-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => navigate('audit')}>
               <FileText size={18} /> 
               <span className="sidebar-text">Audit Logs</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
+            <button className={`sidebar-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => navigate('users')}>
               <Users size={18} /> 
               <span className="sidebar-text">Users & Roles</span>
             </button>
-            <button className={`sidebar-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+            <button className={`sidebar-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}>
               <Settings size={18} /> 
               <span className="sidebar-text">Settings</span>
             </button>
