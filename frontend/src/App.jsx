@@ -244,10 +244,12 @@ export default function App() {
         fetchPurchaseOrders();
         fetchAuditLogs();
       } else {
-        alert('Failed to reset data.');
+        const errData = await res.json();
+        alert('Failed to reset data: ' + (errData.error || 'Unknown error'));
       }
     } catch (e) {
       console.error(e);
+      alert('Network error: ' + e.message);
     } finally {
       setResetting(false);
     }
