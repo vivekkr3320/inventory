@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 
 module.exports = {
   development: {
@@ -8,10 +9,10 @@ module.exports = {
     },
     useNullAsDefault: true,
     migrations: {
-      directory: './migrations'
+      directory: path.join(__dirname, 'migrations')
     },
     seeds: {
-      directory: './seeds'
+      directory: path.join(__dirname, 'seeds')
     }
   },
   production: {
@@ -20,13 +21,13 @@ module.exports = {
     pool: {
       min: 0,
       max: 2,
-      idleTimeoutMillis: 10000 // Close connections after 10 seconds of inactivity (serverless friendly)
+      idleTimeoutMillis: 10000
     },
     migrations: {
-      directory: './migrations'
+      directory: path.join(__dirname, 'migrations')
     },
     seeds: {
-      directory: './seeds'
+      directory: path.join(__dirname, 'seeds')
     }
   }
 };

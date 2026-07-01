@@ -838,11 +838,23 @@ app.post('/api/stock/checkout', authenticateToken, async (req, res) => {
 // ----------------------------------------------------
 app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
   try {
+    // Run migrations to ensure all tables exist on the database
+    await db.migrate.latest();
+
     const orgId = req.user.orgId;
     const userId = req.user.userId;
     
-    const defaultLoc = await db('stock_locations').where({ org_id: orgId }).first();
-    if (!defaultLoc) return res.status(500).json({ error: 'Default location missing' });
+    let defaultLoc = await db('stock_locations').where({ org_id: orgId }).first();
+    if (!defaultLoc) {
+      const locationId = 'default-loc-uuid';
+      await db('stock_locations').insert({
+        id: locationId,
+        org_id: orgId,
+        name: 'Primary Warehouse',
+        description: 'Default warehouse'
+      });
+      defaultLoc = { id: locationId };
+    }
     
     await db.transaction(async tr => {
       // 1. Fetch variant ids for this organization to clear movements & levels
