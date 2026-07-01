@@ -853,6 +853,15 @@ app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
       
       const variantIds = variants.map(v => v.id);
 
+      // Truncate tables for this organization
+      await tr('system_audit_logs').where({ org_id: orgId }).del();
+      await tr('purchase_order_items')
+        .join('purchase_orders', 'purchase_order_items.purchase_order_id', 'purchase_orders.id')
+        .where('purchase_orders.org_id', orgId)
+        .del();
+      await tr('purchase_orders').where({ org_id: orgId }).del();
+      await tr('suppliers').where({ org_id: orgId }).del();
+
       if (variantIds.length > 0) {
         await tr('stock_movements').whereIn('variant_id', variantIds).del();
         await tr('stock_levels').whereIn('variant_id', variantIds).del();
@@ -861,7 +870,15 @@ app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
 
       await tr('products').where({ org_id: orgId }).del();
          
-      // 2. Seeding default products to match the screenshot
+      // Seed default suppliers
+      const supplier1Id = crypto.randomUUID();
+      const supplier2Id = crypto.randomUUID();
+      await tr('suppliers').insert([
+        { id: supplier1Id, org_id: orgId, name: "Elite Electronics Ltd", email: "sales@elite-electronics.in", phone: "+91 98765 43210", company: "Elite Electronics Ltd" },
+        { id: supplier2Id, org_id: orgId, name: "PaperCorp India", email: "orders@papercorp.co.in", phone: "+91 99887 76655", company: "PaperCorp India" }
+      ]);
+
+      // Seed default products to match the screenshot
       const demoProducts = [
         { name: "A4 Paper Ream", sku: "OFF-001", barcode: "890103070001", category: "Office Supplies", cost: 180.00, price: 299.00, qty: 45 },
         { name: "Wireless Mouse", sku: "ELC-002", barcode: "890103070002", category: "Electronics", cost: 350.00, price: 699.00, qty: 15 },
@@ -872,6 +889,7 @@ app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
       ];
       
       const billId = "SQMBCA6";
+      const mappedVariants = [];
       
       for (const item of demoProducts) {
         const pId = crypto.randomUUID();
@@ -895,6 +913,8 @@ app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
           cost: item.cost,
           low_stock_threshold: 5
         });
+
+        mappedVariants.push({ vId, sku: item.sku, cost: item.cost });
         
         const checkoutQty = item.sku === 'PKG-001' || item.sku === 'ELC-003' || item.sku === 'ELC-002' ? 6 : 5;
         const initialQty = item.qty + checkoutQty;
@@ -927,12 +947,279 @@ app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
           created_at: new Date('2026-07-01T12:00:00Z')
         });
       }
+
+      // Seed default POs
+      const po1Id = crypto.randomUUID();
+      const po2Id = crypto.randomUUID();
+      await tr('purchase_orders').insert([
+        { id: po1Id, org_id: orgId, supplier_id: supplier1Id, status: "PENDING", total_amount: 3500.00, created_at: new Date('2026-07-01T10:00:00Z') },
+        { id: po2Id, org_id: orgId, supplier_id: supplier2Id, status: "RECEIVED", total_amount: 1800.00, created_at: new Date('2026-06-25T10:00:00Z') }
+      ]);
+
+      const mouseVar = mappedVariants.find(m => m.sku === 'ELC-002');
+      const paperVar = mappedVariants.find(m => m.sku === 'OFF-001');
+
+      if (mouseVar) {
+        await tr('purchase_order_items').insert({
+          id: crypto.randomUUID(),
+          purchase_order_id: po1Id,
+          variant_id: mouseVar.vId,
+          quantity_ordered: 10,
+          quantity_received: 0,
+          cost_at_order: mouseVar.cost
+        });
+      }
+
+      if (paperVar) {
+        await tr('purchase_order_items').insert({
+          id: crypto.randomUUID(),
+          purchase_order_id: po2Id,
+          variant_id: paperVar.vId,
+          quantity_ordered: 10,
+          quantity_received: 10,
+          cost_at_order: paperVar.cost
+        });
+      }
+
+      // Seed default system audit logs
+      await tr('system_audit_logs').insert([
+        { id: crypto.randomUUID(), org_id: orgId, user_id: userId, action_type: "LOGIN", description: "Default administrator session bypassed via auto-auth mode", created_at: new Date('2026-07-01T09:00:00Z') },
+        { id: crypto.randomUUID(), org_id: orgId, user_id: userId, action_type: "SEED_DEMO", description: "Database seeded with default Stockwise HQ demo products and logs", created_at: new Date('2026-07-01T09:05:00Z') },
+        { id: crypto.randomUUID(), org_id: orgId, user_id: userId, action_type: "UPDATE_SETTINGS", description: "Updated organization details to default configuration", created_at: new Date('2026-07-01T09:10:00Z') }
+      ]);
     });
     
     res.json({ success: true });
   } catch (err) {
     console.error("Demo Seeding failed:", err);
     res.status(500).json({ error: 'Failed to reset and seed demo database: ' + err.message });
+  }
+});
+
+// ----------------------------------------------------
+// SUPPLIERS API
+// ----------------------------------------------------
+app.get('/api/suppliers', authenticateToken, async (req, res) => {
+  try {
+    const suppliers = await db('suppliers')
+      .where({ org_id: req.user.orgId })
+      .orderBy('name', 'asc');
+    res.json(suppliers);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/suppliers', authenticateToken, async (req, res) => {
+  const { name, email, phone, company } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  try {
+    const id = crypto.randomUUID();
+    await db('suppliers').insert({
+      id,
+      org_id: req.user.orgId,
+      name,
+      email,
+      phone,
+      company
+    });
+    
+    // Log audit event
+    await db('system_audit_logs').insert({
+      id: crypto.randomUUID(),
+      org_id: req.user.orgId,
+      user_id: req.user.userId,
+      action_type: "CREATE_PARTNER",
+      description: `Created supplier partner: ${name} (${company})`
+    });
+
+    res.json({ id, name, email, phone, company });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------
+// PURCHASE ORDERS API
+// ----------------------------------------------------
+app.get('/api/purchase-orders', authenticateToken, async (req, res) => {
+  try {
+    const pos = await db('purchase_orders')
+      .leftJoin('suppliers', 'purchase_orders.supplier_id', 'suppliers.id')
+      .select('purchase_orders.*', 'suppliers.name as supplier_name')
+      .where('purchase_orders.org_id', req.user.orgId)
+      .orderBy('purchase_orders.created_at', 'desc');
+      
+    for (const po of pos) {
+      po.items = await db('purchase_order_items')
+        .join('product_variants', 'purchase_order_items.variant_id', 'product_variants.id')
+        .join('products', 'product_variants.product_id', 'products.id')
+        .select(
+          'purchase_order_items.*',
+          'products.name as product_name',
+          'product_variants.name as variant_name',
+          'product_variants.sku as product_sku'
+        )
+        .where({ purchase_order_id: po.id });
+    }
+    res.json(pos);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/purchase-orders', authenticateToken, async (req, res) => {
+  const { supplierId, items } = req.body;
+  if (!items || items.length === 0) {
+    return res.status(400).json({ error: 'At least one item is required' });
+  }
+  
+  const poId = crypto.randomUUID();
+  
+  try {
+    let totalAmount = 0;
+    items.forEach(item => {
+      totalAmount += Number(item.cost) * Number(item.quantityOrdered);
+    });
+    
+    await db.transaction(async tr => {
+      await tr('purchase_orders').insert({
+        id: poId,
+        org_id: req.user.orgId,
+        supplier_id: supplierId || null,
+        status: 'DRAFT',
+        total_amount: totalAmount
+      });
+      
+      for (const item of items) {
+        await tr('purchase_order_items').insert({
+          id: crypto.randomUUID(),
+          purchase_order_id: poId,
+          variant_id: item.variantId,
+          quantity_ordered: Number(item.quantityOrdered),
+          quantity_received: 0,
+          cost_at_order: Number(item.cost)
+        });
+      }
+
+      await tr('system_audit_logs').insert({
+        id: crypto.randomUUID(),
+        org_id: req.user.orgId,
+        user_id: req.user.userId,
+        action_type: "CREATE_PO",
+        description: `Created Purchase Order Draft #${poId.substring(0, 8)} totaling ₹${totalAmount.toFixed(2)}`
+      });
+    });
+    
+    res.json({ id: poId, success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/purchase-orders/:id/status', authenticateToken, async (req, res) => {
+  const { status } = req.body;
+  const poId = req.params.id;
+  
+  try {
+    const po = await db('purchase_orders')
+      .where({ id: poId, org_id: req.user.orgId })
+      .first();
+    if (!po) return res.status(404).json({ error: 'Purchase order not found' });
+    
+    if (po.status === 'RECEIVED') {
+      return res.status(400).json({ error: 'Purchase order has already been received' });
+    }
+    
+    await db.transaction(async tr => {
+      await tr('purchase_orders')
+        .where({ id: poId })
+        .update({ status, updated_at: tr.fn.now() });
+        
+      if (status === 'RECEIVED') {
+        const items = await tr('purchase_order_items').where({ purchase_order_id: poId });
+        const defaultLoc = await tr('stock_locations').where({ org_id: req.user.orgId }).first();
+        if (!defaultLoc) throw new Error('Default stock location missing');
+        
+        for (const item of items) {
+          await tr('purchase_order_items')
+            .where({ id: item.id })
+            .update({ quantity_received: item.quantity_ordered });
+            
+          const level = await tr('stock_levels')
+            .where({ variant_id: item.variant_id, location_id: defaultLoc.id })
+            .first();
+            
+          if (level) {
+            await tr('stock_levels')
+              .where({ id: level.id })
+              .update({ quantity: level.quantity + item.quantity_ordered, updated_at: tr.fn.now() });
+          } else {
+            await tr('stock_levels').insert({
+              id: crypto.randomUUID(),
+              variant_id: item.variant_id,
+              location_id: defaultLoc.id,
+              quantity: item.quantity_ordered
+            });
+          }
+          
+          await tr('stock_movements').insert({
+            id: crypto.randomUUID(),
+            variant_id: item.variant_id,
+            location_id: defaultLoc.id,
+            user_id: req.user.userId,
+            quantity_delta: item.quantity_ordered,
+            reason: 'received',
+            reference_note: `Received PO #${poId.substring(0, 8)}`
+          });
+        }
+      }
+
+      await tr('system_audit_logs').insert({
+        id: crypto.randomUUID(),
+        org_id: req.user.orgId,
+        user_id: req.user.userId,
+        action_type: "UPDATE_PO",
+        description: `Updated Purchase Order #${poId.substring(0, 8)} status to ${status}`
+      });
+    });
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error("PO status change error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------
+// USERS & ROLES API
+// ----------------------------------------------------
+app.get('/api/users', authenticateToken, async (req, res) => {
+  try {
+    const users = await db('users')
+      .select('id', 'email', 'role', 'created_at')
+      .where({ org_id: req.user.orgId })
+      .orderBy('email', 'asc');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------
+// AUDIT LOGS API
+// ----------------------------------------------------
+app.get('/api/audit-logs', authenticateToken, async (req, res) => {
+  try {
+    const logs = await db('system_audit_logs')
+      .leftJoin('users', 'system_audit_logs.user_id', 'users.id')
+      .select('system_audit_logs.*', 'users.email as user_email')
+      .where('system_audit_logs.org_id', req.user.orgId)
+      .orderBy('system_audit_logs.created_at', 'desc')
+      .limit(50);
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

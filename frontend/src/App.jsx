@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Package, Search, Plus, Camera, Settings, LogOut, 
   Sparkles, ShieldAlert, ArrowUpDown, History, Key, CheckCircle, RefreshCw, 
-  ShoppingBag, LayoutDashboard, Minus, Trash2, ShieldX
+  ShoppingBag, LayoutDashboard, Minus, Trash2, ShieldX, Users, FileText, 
+  TrendingUp, Truck, Users2, X
 } from 'lucide-react';
 import BarcodeScanner from './components/BarcodeScanner';
 import AddProductModal from './components/AddProductModal';
 
 export default function App() {
   // Navigation & auth state
-  const [token, setToken] = useState('bypass'); // Bypassed auth session
+  const [token, setToken] = useState('bypass'); // Auto-auth session
   const [activeTab, setActiveTab] = useState('dashboard');
   
   // App core data state
@@ -22,6 +23,13 @@ export default function App() {
     outOfStockCount: 0, 
     recentMovements: [] 
   });
+  
+  // Tab-specific datasets
+  const [suppliers, setSuppliers] = useState([]);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+
   const [search, setSearch] = useState('');
   const [filterLowStock, setFilterLowStock] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -63,9 +71,21 @@ export default function App() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
 
+  // Create Supplier Modal state
+  const [addSupplierOpen, setAddSupplierOpen] = useState(false);
+  const [supplierName, setSupplierName] = useState('');
+  const [supplierEmail, setSupplierEmail] = useState('');
+  const [supplierPhone, setSupplierPhone] = useState('');
+  const [supplierCompany, setSupplierCompany] = useState('');
+
+  // Create Purchase Order Modal state
+  const [addPoOpen, setAddPoOpen] = useState(false);
+  const [poSupplierId, setPoSupplierId] = useState('');
+  const [poItems, setPoItems] = useState([{ variantId: '', quantityOrdered: 5, cost: 100 }]);
+
   const apiHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-  // Fetch dashboard summary & products list
+  // Fetch core dashboard data
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
@@ -76,7 +96,7 @@ export default function App() {
       }
 
       let prodUrl = `/api/products?search=${search}`;
-      if (filterLowStock) prodUrl += '&lowStock=true';
+      if (filterLowStock || activeTab === 'alerts') prodUrl += '&lowStock=true';
       const prodRes = await fetch(prodUrl, { headers: apiHeaders });
       if (prodRes.ok) {
         const prodData = await prodRes.json();
@@ -86,6 +106,58 @@ export default function App() {
       console.error('Fetch dashboard error:', e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Fetch suppliers
+  const fetchSuppliers = async () => {
+    try {
+      const res = await fetch('/api/suppliers', { headers: apiHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setSuppliers(data);
+      }
+    } catch (e) {
+      console.error('Fetch suppliers error:', e);
+    }
+  };
+
+  // Fetch purchase orders
+  const fetchPurchaseOrders = async () => {
+    try {
+      const res = await fetch('/api/purchase-orders', { headers: apiHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setPurchaseOrders(data);
+      }
+    } catch (e) {
+      console.error('Fetch POs error:', e);
+    }
+  };
+
+  // Fetch users list
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/users', { headers: apiHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data);
+      }
+    } catch (e) {
+      console.error('Fetch users error:', e);
+    }
+  };
+
+  // Fetch audit logs
+  const fetchAuditLogs = async () => {
+    try {
+      const res = await fetch('/api/audit-logs', { headers: apiHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLogs(data);
+      }
+    } catch (e) {
+      console.error('Fetch audit logs error:', e);
     }
   };
 
@@ -104,12 +176,31 @@ export default function App() {
     }
   };
 
+  // Coordinated loaders based on current view tab
   useEffect(() => {
     fetchDashboardData();
-    fetchSettings();
-  }, [search, filterLowStock]);
+  }, [search, filterLowStock, activeTab]);
 
-  // Seeding default Demo Data
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'po' || activeTab === 'pos' || activeTab === 'partners') {
+      fetchSuppliers();
+    }
+    if (activeTab === 'po') {
+      fetchPurchaseOrders();
+    }
+    if (activeTab === 'users') {
+      fetchUsers();
+    }
+    if (activeTab === 'audit') {
+      fetchAuditLogs();
+    }
+  }, [activeTab]);
+
+  // Seeding Demo Data
   const handleResetDemoData = async () => {
     setResetting(true);
     try {
@@ -119,7 +210,11 @@ export default function App() {
       });
       if (res.ok) {
         setShowResetConfirm(false);
+        setActiveTab('dashboard');
         fetchDashboardData();
+        fetchSuppliers();
+        fetchPurchaseOrders();
+        fetchAuditLogs();
       } else {
         alert('Failed to reset data.');
       }
@@ -127,6 +222,82 @@ export default function App() {
       console.error(e);
     } finally {
       setResetting(false);
+    }
+  };
+
+  // Add Partner
+  const handleCreateSupplier = async (e) => {
+    e.preventDefault();
+    if (!supplierName) return;
+    try {
+      const res = await fetch('/api/suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders },
+        body: JSON.stringify({
+          name: supplierName,
+          email: supplierEmail,
+          phone: supplierPhone,
+          company: supplierCompany
+        })
+      });
+      if (res.ok) {
+        setSupplierName('');
+        setSupplierEmail('');
+        setSupplierPhone('');
+        setSupplierCompany('');
+        setAddSupplierOpen(false);
+        fetchSuppliers();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Create PO
+  const handleCreatePO = async (e) => {
+    e.preventDefault();
+    const validItems = poItems.filter(item => item.variantId && item.quantityOrdered > 0);
+    if (validItems.length === 0) {
+      alert('Add at least one product item to the purchase order.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/purchase-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders },
+        body: JSON.stringify({
+          supplierId: poSupplierId || null,
+          items: validItems
+        })
+      });
+      if (res.ok) {
+        setAddPoOpen(false);
+        setPoSupplierId('');
+        setPoItems([{ variantId: '', quantityOrdered: 5, cost: 100 }]);
+        fetchPurchaseOrders();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // PO status update triggers (e.g. marking PO as pending or received)
+  const handlePOStatusUpdate = async (poId, newStatus) => {
+    try {
+      const res = await fetch(`/api/purchase-orders/${poId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (res.ok) {
+        fetchPurchaseOrders();
+        fetchDashboardData();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to update order status');
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -215,7 +386,7 @@ export default function App() {
     }
   };
 
-  // Dashboard Barcode Scanner
+  // Barcode Scanner Handlers
   const handleBarcodeScanned = async (barcode) => {
     setScannerOpen(false);
     try {
@@ -280,9 +451,7 @@ export default function App() {
     }
   };
 
-  // ----------------------------------------------------
-  // POS Checkout Cart Handlers
-  // ----------------------------------------------------
+  // POS Billing Handlers
   const addToCart = (variant, productName) => {
     setCart(prev => {
       const existing = prev.find(item => item.variantId === variant.id);
@@ -325,7 +494,6 @@ export default function App() {
       
       if (data.found && data.product) {
         const matched = data.product;
-        // Fetch details to retrieve current inventory count
         const parentRes = await fetch(`/api/products/${matched.id}`, { headers: apiHeaders });
         if (parentRes.ok) {
           const parent = await parentRes.json();
@@ -370,8 +538,19 @@ export default function App() {
 
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
+  // Helper: Get flat array of all variants for creation selectors
+  const getFlatVariants = () => {
+    const arr = [];
+    products.forEach(p => {
+      p.variants.forEach(v => {
+        arr.push({ ...v, productName: p.name });
+      });
+    });
+    return arr;
+  };
+
   // ----------------------------------------------------
-  // RENDER TABS CONTENT
+  // MODULE RENDER VIEWS
   // ----------------------------------------------------
 
   // 1. Dashboard View
@@ -390,7 +569,7 @@ export default function App() {
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-dark)' }}>Total assets at cost</div>
         </div>
-        <div className="glass-card" style={{ borderLeft: '4px solid var(--warning)' }}>
+        <div className="glass-card" style={{ borderLeft: '4px solid var(--warning)' }} onClick={() => setActiveTab('alerts')} style={{ cursor: 'pointer', borderLeft: '4px solid var(--warning)' }}>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>LOW STOCK ALERTS</div>
           <div style={{ fontSize: '28px', fontWeight: 'bold', color: summary.lowStockCount > 0 ? 'var(--warning)' : 'var(--text-main)', margin: '4px 0' }}>
             {summary.lowStockCount}
@@ -406,7 +585,6 @@ export default function App() {
         </div>
       </section>
 
-      {/* Recent transactions block */}
       <section className="glass-card">
         <div className="flex-between" style={{ marginBottom: '20px' }}>
           <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -467,33 +645,35 @@ export default function App() {
     </div>
   );
 
-  // 2. Catalog View
-  const renderCatalog = () => (
+  // 2. Catalog View (Shared by Catalog and Alerts tab, alerts tab sets filter automatically)
+  const renderCatalog = (isAlertsOnly = false) => (
     <section className="glass-card">
       <div className="flex-between" style={{ flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
-        <h3 style={{ margin: 0 }}>Products Catalog</h3>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button 
-            className={`btn ${filterLowStock ? 'btn-danger' : 'btn-secondary'}`}
-            onClick={() => setFilterLowStock(!filterLowStock)}
-            style={{ padding: '10px 14px' }}
-          >
-            Low Stock Only
-          </button>
-          <button className="btn btn-secondary" onClick={() => { setPrefilledBarcode(''); setScannerOpen(true); }} style={{ gap: '8px' }}>
-            <Camera size={16} /> Scan Barcode
-          </button>
-          <button className="btn btn-primary" onClick={() => { setPrefilledBarcode(''); setAddProductOpen(true); }} style={{ gap: '8px' }}>
-            <Plus size={16} /> Add Product
-          </button>
-        </div>
+        <h3 style={{ margin: 0 }}>{isAlertsOnly ? 'Active Stock Alerts' : 'Products Catalog'}</h3>
+        {!isAlertsOnly ? (
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button 
+              className={`btn ${filterLowStock ? 'btn-danger' : 'btn-secondary'}`}
+              onClick={() => setFilterLowStock(!filterLowStock)}
+              style={{ padding: '10px 14px' }}
+            >
+              Low Stock Only
+            </button>
+            <button className="btn btn-secondary" onClick={() => { setPrefilledBarcode(''); setScannerOpen(true); }} style={{ gap: '8px' }}>
+              <Camera size={16} /> Scan Barcode
+            </button>
+            <button className="btn btn-primary" onClick={() => { setPrefilledBarcode(''); setAddProductOpen(true); }} style={{ gap: '8px' }}>
+              <Plus size={16} /> Add Product
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ position: 'relative', marginBottom: '20px' }}>
         <Search style={{ position: 'absolute', left: '14px', top: '13px', color: 'var(--text-muted)' }} size={16} />
         <input 
           type="text" 
-          placeholder="Search by title, SKU, or barcode..."
+          placeholder="Search catalog items..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{ paddingLeft: '40px' }}
@@ -507,7 +687,7 @@ export default function App() {
         </div>
       ) : products.length === 0 ? (
         <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 20px' }}>
-          No items found. Click **Add Product** or sync with Shopify.
+          {isAlertsOnly ? 'No products are currently low on stock. Great job!' : 'No items found in catalog.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -538,6 +718,7 @@ export default function App() {
                   {p.variants.map(v => {
                     const isOut = v.total_quantity === 0;
                     const isLow = v.total_quantity <= v.low_stock_threshold;
+                    if (isAlertsOnly && !isLow) return null; // skip healthy items in Alerts view
                     return (
                       <tr key={v.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
                         <td style={{ padding: '8px 6px', fontWeight: 500 }}>{v.name}</td>
@@ -578,46 +759,33 @@ export default function App() {
     </section>
   );
 
-  // 3. POS Billing checkout View
-  const renderPOS = () => {
-    // Find all variants available to manually select
-    const allVariants = [];
-    products.forEach(p => {
-      p.variants.forEach(v => {
-        allVariants.push({ ...v, productName: p.name });
-      });
-    });
+  // 3. POS Billing Tab
+  const renderPOS = () => (
+    <div className="pos-container">
+      {/* Left: Product selection */}
+      <div className="glass-card" style={{ minHeight: '400px' }}>
+        <div className="flex-between" style={{ marginBottom: '20px' }}>
+          <h3 style={{ margin: 0 }}>Item Checkout Grid</h3>
+          <button className="btn btn-primary" onClick={() => setPosScannerOpen(true)} style={{ gap: '6px' }}>
+            <Camera size={16} /> Scan Barcode Cart
+          </button>
+        </div>
 
-    const filteredVariants = allVariants.filter(v => 
-      v.productName.toLowerCase().includes(posSearch.toLowerCase()) || 
-      v.sku.toLowerCase().includes(posSearch.toLowerCase()) ||
-      (v.barcode && v.barcode.includes(posSearch))
-    );
+        <div style={{ position: 'relative', marginBottom: '20px' }}>
+          <Search style={{ position: 'absolute', left: '14px', top: '13px', color: 'var(--text-muted)' }} size={16} />
+          <input 
+            type="text" 
+            placeholder="Search items by name, SKU..."
+            value={posSearch}
+            onChange={e => setPosSearch(e.target.value)}
+            style={{ paddingLeft: '40px' }}
+          />
+        </div>
 
-    return (
-      <div className="pos-container">
-        {/* Left: Product Selection grid */}
-        <div className="glass-card" style={{ minHeight: '400px' }}>
-          <div className="flex-between" style={{ marginBottom: '20px' }}>
-            <h3 style={{ margin: 0 }}>Item Checkout Grid</h3>
-            <button className="btn btn-primary" onClick={() => setPosScannerOpen(true)} style={{ gap: '6px' }}>
-              <Camera size={16} /> Scan Barcode Cart
-            </button>
-          </div>
-
-          <div style={{ position: 'relative', marginBottom: '20px' }}>
-            <Search style={{ position: 'absolute', left: '14px', top: '13px', color: 'var(--text-muted)' }} size={16} />
-            <input 
-              type="text" 
-              placeholder="Search items by name, SKU..."
-              value={posSearch}
-              onChange={e => setPosSearch(e.target.value)}
-              style={{ paddingLeft: '40px' }}
-            />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
-            {filteredVariants.slice(0, 12).map(v => {
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
+          {getFlatVariants()
+            .filter(v => v.productName.toLowerCase().includes(posSearch.toLowerCase()) || v.sku.toLowerCase().includes(posSearch.toLowerCase()))
+            .slice(0, 12).map(v => {
               const isOut = v.total_quantity === 0;
               return (
                 <button 
@@ -648,125 +816,301 @@ export default function App() {
                 </button>
               );
             })}
-          </div>
         </div>
+      </div>
 
-        {/* Right: Checkout summary cart */}
-        <div className="glass-card" style={{ position: 'sticky', top: '24px' }}>
-          <h3 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ShoppingBag size={20} className="text-primary" /> Active Bill
-          </h3>
+      {/* Right: Cart checkout */}
+      <div className="glass-card">
+        <h3 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ShoppingBag size={20} className="text-primary" /> Active Bill
+        </h3>
 
-          {checkoutStatus ? (
-            <div className="badge badge-success" style={{ width: '100%', padding: '10px', borderRadius: '8px', marginBottom: '16px', textTransform: 'none' }}>
-              {checkoutStatus}
-            </div>
-          ) : null}
+        {checkoutStatus ? (
+          <div className="badge badge-success" style={{ width: '100%', padding: '10px', borderRadius: '8px', marginBottom: '16px', textTransform: 'none' }}>
+            {checkoutStatus}
+          </div>
+        ) : null}
 
-          {cart.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 10px', color: 'var(--text-muted)', fontSize: '13px' }}>
-              Cart is empty. Tap items or scan barcodes to add them.
-            </div>
-          ) : (
-            <div>
-              <div style={{ maxHeight: '280px', overflowY: 'auto', marginBottom: '20px' }}>
-                {cart.map(item => (
-                  <div key={item.variantId} className="pos-cart-item">
-                    <div style={{ width: '60%' }}>
-                      <div style={{ fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.name}
-                      </div>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>₹{item.price} x {item.quantity}</span>
+        {cart.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 10px', color: 'var(--text-muted)', fontSize: '13px' }}>
+            Cart is empty. Tap items or scan barcodes to add them.
+          </div>
+        ) : (
+          <div>
+            <div style={{ maxHeight: '280px', overflowY: 'auto', marginBottom: '20px' }}>
+              {cart.map(item => (
+                <div key={item.variantId} className="pos-cart-item">
+                  <div style={{ width: '60%' }}>
+                    <div style={{ fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.name}
                     </div>
-                    
-                    {/* Controls */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <button className="btn btn-secondary" onClick={() => updateCartQuantity(item.variantId, -1)} style={{ padding: '4px 8px' }}>
-                        <Minus size={12} />
-                      </button>
-                      <span style={{ fontSize: '13px', fontWeight: 'bold', minWidth: '18px', textAlign: 'center' }}>
-                        {item.quantity}
-                      </span>
-                      <button className="btn btn-secondary" onClick={() => updateCartQuantity(item.variantId, 1)} style={{ padding: '4px 8px' }}>
-                        <Plus size={12} />
-                      </button>
-                      <button className="btn" onClick={() => removeFromCart(item.variantId)} style={{ padding: '4px', background: 'transparent', border: 'none' }}>
-                        <Trash2 size={14} className="text-danger" />
-                      </button>
-                    </div>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>₹{item.price} x {item.quantity}</span>
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button className="btn btn-secondary" onClick={() => updateCartQuantity(item.variantId, -1)} style={{ padding: '4px 8px' }}>
+                      <Minus size={12} />
+                    </button>
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', minWidth: '18px', textAlign: 'center' }}>
+                      {item.quantity}
+                    </span>
+                    <button className="btn btn-secondary" onClick={() => updateCartQuantity(item.variantId, 1)} style={{ padding: '4px 8px' }}>
+                      <Plus size={12} />
+                    </button>
+                    <button className="btn" onClick={() => removeFromCart(item.variantId)} style={{ padding: '4px', background: 'transparent', border: 'none' }}>
+                      <Trash2 size={14} className="text-danger" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginBottom: '20px' }}>
+              <div className="flex-between" style={{ fontSize: '14px', marginBottom: '6px' }}>
+                <span>Total Items</span>
+                <span style={{ fontWeight: 'bold' }}>{cart.reduce((sum, item) => sum + item.quantity, 0)}</span>
+              </div>
+              <div className="flex-between" style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                <span>Grand Total</span>
+                <span className="text-primary">₹{cartTotal.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <button className="btn btn-primary" onClick={executePOSCheckout} style={{ width: '100%', height: '48px' }}>
+              Complete Checkout
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // 4. Purchase Orders (PO) Tab View
+  const renderPurchaseOrders = () => (
+    <section className="glass-card">
+      <div className="flex-between" style={{ marginBottom: '20px' }}>
+        <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Truck className="text-primary" size={22} /> Purchase Orders (PO)
+        </h3>
+        <button className="btn btn-primary" onClick={() => setAddPoOpen(true)} style={{ gap: '6px' }}>
+          <Plus size={16} /> Create Purchase Order
+        </button>
+      </div>
+
+      {purchaseOrders.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+          No purchase orders created. Seeding demo data will populate historical records.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {purchaseOrders.map(po => (
+            <div key={po.id} style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'rgba(255, 255, 255, 0.01)' }}>
+              <div className="flex-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '10px', marginBottom: '10px' }}>
+                <div>
+                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>PO #{po.id.substring(0, 8)}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Date: {new Date(po.created_at).toLocaleDateString()}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <span className={`badge ${po.status === 'RECEIVED' ? 'badge-success' : po.status === 'PENDING' ? 'badge-warning' : 'badge-secondary'}`} style={{ marginRight: '10px' }}>
+                    {po.status}
+                  </span>
+                  <span style={{ fontWeight: 'bold', fontSize: '15px' }}>₹{Number(po.total_amount).toFixed(2)}</span>
+                </div>
+              </div>
+              
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                <strong>Supplier:</strong> {po.supplier_name || 'N/A'}
+              </div>
+
+              {/* Items in PO */}
+              <div style={{ marginBottom: '12px' }}>
+                {po.items && po.items.map(item => (
+                  <div key={item.id} className="flex-between" style={{ fontSize: '12px', padding: '4px 0', borderBottom: '1px dashed rgba(255,255,255,0.01)' }}>
+                    <span>{item.product_name} - {item.variant_name} <span style={{ color: 'var(--text-dark)' }}>({item.product_sku})</span></span>
+                    <span>Ordered: <strong>{item.quantity_ordered}</strong> @ ₹{Number(item.cost_at_order).toFixed(2)}</span>
                   </div>
                 ))}
               </div>
 
-              {/* Subtotal */}
-              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginBottom: '20px' }}>
-                <div className="flex-between" style={{ fontSize: '14px', marginBottom: '6px' }}>
-                  <span>Total Items</span>
-                  <span style={{ fontWeight: 'bold' }}>{cart.reduce((sum, item) => sum + item.quantity, 0)}</span>
+              {/* Actions */}
+              {po.status === 'DRAFT' ? (
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary" onClick={() => handlePOStatusUpdate(po.id, 'PENDING')} style={{ padding: '6px 12px', fontSize: '11px' }}>
+                    Mark PO as Ordered (Pending)
+                  </button>
                 </div>
-                <div className="flex-between" style={{ fontSize: '18px', fontWeight: 'bold' }}>
-                  <span>Grand Total</span>
-                  <span className="text-primary">₹{cartTotal.toFixed(2)}</span>
+              ) : po.status === 'PENDING' ? (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button className="btn btn-primary" onClick={() => handlePOStatusUpdate(po.id, 'RECEIVED')} style={{ padding: '6px 12px', fontSize: '11px' }}>
+                    Receive Stock Items
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  // 5. Analytics Tab View (Dynamic Pure SVGs)
+  const renderAnalytics = () => {
+    // Math helpers for SVG
+    const categories = {};
+    let totalVal = 0;
+    products.forEach(p => {
+      p.variants.forEach(v => {
+        const val = (v.total_quantity || 0) * (v.cost || 0);
+        categories[p.category || 'Other'] = (categories[p.category || 'Other'] || 0) + val;
+        totalVal += val;
+      });
+    });
+
+    const catData = Object.keys(categories).map(k => ({
+      name: k,
+      val: categories[k],
+      pct: totalVal > 0 ? (categories[k] / totalVal) : 0
+    }));
+
+    // Horizontal bars: top 5 products by valuation
+    const productValuations = [];
+    products.forEach(p => {
+      let prodVal = 0;
+      p.variants.forEach(v => {
+        prodVal += (v.total_quantity || 0) * (v.cost || 0);
+      });
+      productValuations.push({ name: p.name, val: prodVal });
+    });
+    productValuations.sort((a,b) => b.val - a.val);
+    const topProducts = productValuations.slice(0, 5);
+    const maxVal = topProducts.length > 0 ? Math.max(...topProducts.map(p => p.val)) : 100;
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+        <div className="grid-3">
+          {/* Chart 1: Donut Chart Valuation by Category */}
+          <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <h4 style={{ alignSelf: 'flex-start', margin: '0 0 16px 0' }}>Asset Value by Category</h4>
+            
+            {totalVal === 0 ? (
+              <div style={{ padding: '40px 0', color: 'var(--text-muted)' }}>No inventory value to graph</div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', width: '100%' }}>
+                {/* SVG Donut */}
+                <svg width="120" height="120" viewBox="0 0 42 42" style={{ transform: 'rotate(-90deg)' }}>
+                  <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="rgba(255,255,255,0.05)" strokeWidth="6"></circle>
+                  {(() => {
+                    let accumulatedPercent = 0;
+                    const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+                    return catData.map((cat, i) => {
+                      const strokeDash = `${cat.pct * 100} ${100 - (cat.pct * 100)}`;
+                      const strokeOffset = 100 - accumulatedPercent;
+                      accumulatedPercent += (cat.pct * 100);
+                      return (
+                        <circle 
+                          key={cat.name}
+                          cx="21" cy="21" r="15.915" 
+                          fill="transparent" 
+                          stroke={colors[i % colors.length]} 
+                          strokeWidth="6" 
+                          strokeDasharray={strokeDash}
+                          strokeDashoffset={strokeOffset}
+                        />
+                      );
+                    });
+                  })()}
+                </svg>
+                {/* Legend */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', flexGrow: 1 }}>
+                  {catData.map((cat, i) => {
+                    const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+                    return (
+                      <div key={cat.name} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: colors[i % colors.length] }}></span>
+                        <span style={{ color: 'var(--text-muted)' }}>{cat.name}: <strong>{(cat.pct * 100).toFixed(0)}%</strong></span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
+            )}
+          </div>
 
-              <button className="btn btn-primary" onClick={executePOSCheckout} style={{ width: '100%', height: '48px' }}>
-                Complete Checkout
-              </button>
-            </div>
-          )}
+          {/* Chart 2: Top Products by Value (Horizontal bars) */}
+          <div className="glass-card" style={{ gridColumn: 'span 2' }}>
+            <h4 style={{ margin: '0 0 16px 0' }}>Top 5 Valued Products (INR)</h4>
+            {topProducts.length === 0 ? (
+              <div style={{ padding: '40px', color: 'var(--text-muted)', textAlign: 'center' }}>Add products to view details</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {topProducts.map((p, idx) => {
+                  const widthPct = Math.max(10, (p.val / maxVal) * 100);
+                  const colors = ['#6366f1', '#4f46e5', '#8b5cf6', '#a855f7', '#d946ef'];
+                  return (
+                    <div key={p.name}>
+                      <div className="flex-between" style={{ fontSize: '11px', marginBottom: '4px' }}>
+                        <span style={{ fontWeight: 600 }}>{p.name}</span>
+                        <span>₹{p.val.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${widthPct}%`, height: '100%', background: colors[idx % colors.length], borderRadius: '4px' }}></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Transaction ledger stats */}
+        <div className="glass-card">
+          <h4 style={{ margin: '0 0 12px 0' }}>Transaction Velocity Insights</h4>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            You have processed <strong>{summary.recentMovements.length} logged stock movements</strong> across the database. 
+            Of these, checkouts processed under type <code>ISSUE</code> reflect sales activity while stock receipts are tracked under <code>RECEIPT</code>.
+          </p>
         </div>
       </div>
     );
   };
 
-  // 4. Detailed Ledger logs View
-  const renderLedger = () => (
+  // 6. Partners & Tags view (Suppliers)
+  const renderPartners = () => (
     <section className="glass-card">
-      <h3 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <History className="text-primary" size={20} /> Stock ledger audit trail
-      </h3>
-      {summary.recentMovements.length === 0 ? (
+      <div className="flex-between" style={{ marginBottom: '20px' }}>
+        <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Truck className="text-primary" size={20} /> Partners & Suppliers
+        </h3>
+        <button className="btn btn-primary" onClick={() => setAddSupplierOpen(true)} style={{ gap: '6px' }}>
+          <Plus size={16} /> Add Supplier Partner
+        </button>
+      </div>
+
+      {suppliers.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-          No logs found.
+          No supplier partners saved. Seed demo data to insert defaults.
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '12px 8px' }}>DATE</th>
-                <th style={{ padding: '12px 8px' }}>PRODUCT</th>
-                <th style={{ padding: '12px 8px' }}>VARIANT</th>
-                <th style={{ padding: '12px 8px' }}>TYPE</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right' }}>QUANTITY</th>
-                <th style={{ padding: '12px 8px' }}>REFERENCE NOTE</th>
+                <th style={{ padding: '12px 8px' }}>NAME</th>
+                <th style={{ padding: '12px 8px' }}>COMPANY</th>
+                <th style={{ padding: '12px 8px' }}>EMAIL</th>
+                <th style={{ padding: '12px 8px' }}>PHONE</th>
               </tr>
             </thead>
             <tbody>
-              {summary.recentMovements.map(m => {
-                const isIssue = m.quantity_delta < 0;
-                return (
-                  <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                    <td style={{ padding: '14px 8px', color: 'var(--text-muted)' }}>
-                      {new Date(m.created_at).toLocaleString()}
-                    </td>
-                    <td style={{ padding: '14px 8px', fontWeight: 600 }}>{m.product_name}</td>
-                    <td style={{ padding: '14px 8px', color: 'var(--text-muted)' }}>{m.variant_name} (SKU: {m.product_sku})</td>
-                    <td style={{ padding: '14px 8px' }}>
-                      <span className={`badge ${isIssue ? 'badge-danger' : 'badge-success'}`}>
-                        {isIssue ? 'ISSUE' : 'RECEIPT'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '14px 8px', textAlign: 'right', fontWeight: 'bold', color: isIssue ? 'var(--danger)' : 'var(--success)' }}>
-                      {m.quantity_delta}
-                    </td>
-                    <td style={{ padding: '14px 8px', color: 'var(--text-muted)' }}>
-                      {m.reference_note || m.reason}
-                    </td>
-                  </tr>
-                );
-              })}
+              {suppliers.map(s => (
+                <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                  <td style={{ padding: '12px 8px', fontWeight: 600 }}>{s.name}</td>
+                  <td style={{ padding: '12px 8px' }}>{s.company || 'N/A'}</td>
+                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>{s.email || 'N/A'}</td>
+                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>{s.phone || 'N/A'}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -774,98 +1118,93 @@ export default function App() {
     </section>
   );
 
-  // 5. Settings view
-  const renderSettings = () => (
-    <div className="glass-card" style={{ border: '1px solid rgba(99, 102, 241, 0.2)' }}>
-      <div className="flex-between" style={{ marginBottom: '16px' }}>
-        <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Settings className="text-primary" size={18} /> Integrations & Credentials
-        </h4>
-        <span className={`badge ${hasApiKeySaved ? 'badge-success' : 'badge-warning'}`}>
-          {hasApiKeySaved ? 'Credentials saved' : 'Sandbox Mode'}
-        </span>
-      </div>
-
-      {settingsSuccess ? (
-        <div className="badge badge-success" style={{ width: '100%', padding: '10px', borderRadius: '8px', marginBottom: '16px', textTransform: 'none' }}>
-          {settingsSuccess}
+  // 7. Audit Logs View
+  const renderAuditLogs = () => (
+    <section className="glass-card">
+      <h3 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <FileText className="text-primary" size={20} /> System Audit Trail Logs
+      </h3>
+      {auditLogs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+          No system event logs recorded.
         </div>
-      ) : null}
-
-      <form onSubmit={saveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {/* Vision BYOK */}
-        <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px' }}>
-          <h5 style={{ margin: '0 0 12px 0' }}>Vision AI Credentials</h5>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div>
-              <label htmlFor="set-prov">Provider</label>
-              <select id="set-prov" value={visionProvider} onChange={e => setVisionProvider(e.target.value)}>
-                <option value="gemini">Google Gemini API (gemini-2.5-flash)</option>
-                <option value="openai">OpenAI API (gpt-4o-mini)</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="set-key">API Key</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input 
-                  id="set-key"
-                  type="password" 
-                  value={apiKeyInput} 
-                  onChange={e => setApiKeyInput(e.target.value)} 
-                  placeholder={hasApiKeySaved ? '••••••••••••••••' : 'AI_API_KEY_...'}
-                />
-                {hasApiKeySaved ? (
-                  <button type="button" className="btn btn-danger" onClick={clearVisionApiKey}>Delete</button>
-                ) : null}
-              </div>
-            </div>
-          </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                <th style={{ padding: '12px 8px' }}>DATE</th>
+                <th style={{ padding: '12px 8px' }}>USER</th>
+                <th style={{ padding: '12px 8px' }}>ACTION</th>
+                <th style={{ padding: '12px 8px' }}>DESCRIPTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditLogs.map(l => (
+                <tr key={l.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                  <td style={{ padding: '14px 8px', color: 'var(--text-muted)' }}>
+                    {new Date(l.created_at).toLocaleString()}
+                  </td>
+                  <td style={{ padding: '14px 8px', fontWeight: 500 }}>{l.user_email || 'System'}</td>
+                  <td style={{ padding: '14px 8px' }}>
+                    <span className="badge badge-success" style={{ background: 'rgba(99,102,241,0.08)', color: 'var(--primary)', border: '1px solid rgba(99,102,241,0.1)' }}>
+                      {l.action_type}
+                    </span>
+                  </td>
+                  <td style={{ padding: '14px 8px', color: 'var(--text-muted)' }}>{l.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+      )}
+    </section>
+  );
 
-        {/* Shopify BYOK */}
-        <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px' }}>
-          <h5 style={{ margin: '0 0 12px 0' }}>Shopify Store Integration</h5>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div>
-              <label htmlFor="set-shop">Shop URL</label>
-              <input 
-                id="set-shop"
-                type="text" 
-                value={shopifyShopUrl} 
-                onChange={e => setShopifyShopUrl(e.target.value)} 
-                placeholder="e.g. mystore.myshopify.com"
-              />
-            </div>
-            <div>
-              <label htmlFor="set-token">Admin Access Token</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input 
-                  id="set-token"
-                  type="password" 
-                  value={shopifyAccessToken} 
-                  onChange={e => setShopifyAccessToken(e.target.value)} 
-                  placeholder={hasShopifyTokenSaved ? '••••••••••••••••' : 'shpat_...'}
-                />
-                {hasShopifyTokenSaved ? (
-                  <button type="button" className="btn btn-danger" onClick={clearShopifyCredentials}>Clear</button>
-                ) : null}
-              </div>
-            </div>
-          </div>
+  // 8. Users View
+  const renderUsers = () => (
+    <section className="glass-card">
+      <h3 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <Users className="text-primary" size={20} /> Team Users & Roles
+      </h3>
+      {users.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+          No user profiles loaded.
         </div>
-
-        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-          <button type="submit" className="btn btn-primary" style={{ padding: '10px 24px' }}>
-            Save Configurations
-          </button>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                <th style={{ padding: '12px 8px' }}>EMAIL ADDRESS</th>
+                <th style={{ padding: '12px 8px' }}>ROLE</th>
+                <th style={{ padding: '12px 8px' }}>CREATED AT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                  <td style={{ padding: '12px 8px', fontWeight: 600 }}>{u.email}</td>
+                  <td style={{ padding: '12px 8px' }}>
+                    <span className={`badge ${u.role === 'admin' ? 'badge-success' : 'badge-secondary'}`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                    {new Date(u.created_at).toLocaleDateString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </form>
-    </div>
+      )}
+    </section>
   );
 
   return (
     <div className="app-layout">
-      {/* Sidebar Navigation Menu */}
+      {/* Sidebar navigation panel */}
       <aside className="sidebar">
         <div>
           <div className="sidebar-logo">
@@ -885,9 +1224,38 @@ export default function App() {
               <ShoppingBag size={18} /> 
               <span className="sidebar-text">POS Billing</span>
             </button>
+            <button className={`sidebar-item ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>
+              <Truck size={18} /> 
+              <span className="sidebar-text">Purchase Orders</span>
+            </button>
             <button className={`sidebar-item ${activeTab === 'ledger' ? 'active' : ''}`} onClick={() => setActiveTab('ledger')}>
               <History size={18} /> 
               <span className="sidebar-text">Ledger Logs</span>
+            </button>
+            <button className={`sidebar-item ${activeTab === 'alerts' ? 'active' : ''}`} onClick={() => setActiveTab('alerts')}>
+              <ShieldAlert size={18} /> 
+              <span className="sidebar-text">Stock Alerts</span>
+              {summary.lowStockCount > 0 ? (
+                <span className="badge badge-danger" style={{ marginLeft: 'auto', borderRadius: '50%', padding: '2px 6px', fontSize: '9px' }}>
+                  {summary.lowStockCount}
+                </span>
+              ) : null}
+            </button>
+            <button className={`sidebar-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+              <TrendingUp size={18} /> 
+              <span className="sidebar-text">Analytics</span>
+            </button>
+            <button className={`sidebar-item ${activeTab === 'partners' ? 'active' : ''}`} onClick={() => setActiveTab('partners')}>
+              <Users2 size={18} /> 
+              <span className="sidebar-text">Partners & Tags</span>
+            </button>
+            <button className={`sidebar-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => setActiveTab('audit')}>
+              <FileText size={18} /> 
+              <span className="sidebar-text">Audit Logs</span>
+            </button>
+            <button className={`sidebar-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
+              <Users size={18} /> 
+              <span className="sidebar-text">Users & Roles</span>
             </button>
             <button className={`sidebar-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
               <Settings size={18} /> 
@@ -896,7 +1264,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Reset demo data */}
+        {/* Reset button */}
         <button 
           className="sidebar-item" 
           onClick={() => setShowResetConfirm(true)}
@@ -907,11 +1275,11 @@ export default function App() {
         </button>
       </aside>
 
-      {/* Main Panel Content Area */}
+      {/* Main panel view displayer */}
       <main className="main-content">
         <header className="flex-between" style={{ marginBottom: '32px' }}>
           <h2 style={{ margin: 0, textTransform: 'capitalize', fontFamily: 'Outfit' }}>
-            {activeTab === 'pos' ? 'POS Billing Checkout' : activeTab === 'catalog' ? 'Products Catalog' : `${activeTab} view`}
+            {activeTab === 'pos' ? 'POS Billing Checkout' : activeTab === 'po' ? 'Purchase Orders' : activeTab === 'alerts' ? 'Active Stock Alerts' : activeTab === 'partners' ? 'Partners & Suppliers' : activeTab === 'audit' ? 'System Audit logs' : `${activeTab} view`}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>admin (ADMIN)</span>
@@ -925,10 +1293,103 @@ export default function App() {
         ) : null}
 
         {activeTab === 'dashboard' && renderDashboard()}
-        {activeTab === 'catalog' && renderCatalog()}
+        {activeTab === 'catalog' && renderCatalog(false)}
         {activeTab === 'pos' && renderPOS()}
+        {activeTab === 'po' && renderPurchaseOrders()}
         {activeTab === 'ledger' && renderLedger()}
-        {activeTab === 'settings' && renderSettings()}
+        {activeTab === 'alerts' && renderCatalog(true)}
+        {activeTab === 'analytics' && renderAnalytics()}
+        {activeTab === 'partners' && renderPartners()}
+        {activeTab === 'audit' && renderAuditLogs()}
+        {activeTab === 'users' && renderUsers()}
+        {activeTab === 'settings' && saveSettings && (
+          <div className="glass-card" style={{ border: '1px solid rgba(99, 102, 241, 0.2)' }}>
+            <div className="flex-between" style={{ marginBottom: '16px' }}>
+              <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Settings className="text-primary" size={18} /> Integrations & Credentials
+              </h4>
+              <span className={`badge ${hasApiKeySaved ? 'badge-success' : 'badge-warning'}`}>
+                {hasApiKeySaved ? 'Credentials saved' : 'Sandbox Mode'}
+              </span>
+            </div>
+
+            {settingsSuccess ? (
+              <div className="badge badge-success" style={{ width: '100%', padding: '10px', borderRadius: '8px', marginBottom: '16px', textTransform: 'none' }}>
+                {settingsSuccess}
+              </div>
+            ) : null}
+
+            <form onSubmit={saveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px' }}>
+                <h5 style={{ margin: '0 0 12px 0' }}>Vision AI Credentials</h5>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <label htmlFor="set-prov">Provider</label>
+                    <select id="set-prov" value={visionProvider} onChange={e => setVisionProvider(e.target.value)}>
+                      <option value="gemini">Google Gemini API (gemini-2.5-flash)</option>
+                      <option value="openai">OpenAI API (gpt-4o-mini)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="set-key">API Key</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input 
+                        id="set-key"
+                        type="password" 
+                        value={apiKeyInput} 
+                        onChange={e => setApiKeyInput(e.target.value)} 
+                        placeholder={hasApiKeySaved ? '••••••••••••••••' : 'AI_API_KEY_...'}
+                      />
+                      {hasApiKeySaved ? (
+                        <button type="button" className="btn btn-danger" onClick={clearVisionApiKey}>Delete</button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px' }}>
+                <h5 style={{ margin: '0 0 12px 0' }}>Shopify Store Integration</h5>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <label htmlFor="set-shop">Shop URL</label>
+                    <input 
+                      id="set-shop"
+                      type="text" 
+                      value={shopifyShopUrl} 
+                      onChange={e => setShopifyShopUrl(e.target.value)} 
+                      placeholder="e.g. mystore.myshopify.com"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="set-token">Admin Access Token</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input 
+                        id="set-token"
+                        type="password" 
+                        value={shopifyAccessToken} 
+                        onChange={e => setShopifyAccessToken(e.target.value)} 
+                        placeholder={hasShopifyTokenSaved ? '••••••••••••••••' : 'shpat_...'}
+                      />
+                      {hasShopifyTokenSaved ? (
+                        <button type="button" className="btn btn-danger" onClick={clearShopifyCredentials}>Clear</button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary" onClick={triggerShopifySync} disabled={syncingShopify} style={{ marginRight: 'auto' }}>
+                  Sync Shopify Catalog
+                </button>
+                <button type="submit" className="btn btn-primary" style={{ padding: '10px 24px' }}>
+                  Save Configurations
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </main>
 
       {/* Modals & Overlays */}
@@ -943,7 +1404,7 @@ export default function App() {
       {posScannerOpen ? (
         <BarcodeScanner 
           onScan={handlePOSBarcodeScan}
-          onAISnap={() => {}} // No vision snap in POS checkout
+          onAISnap={() => {}} 
           onClose={() => setPosScannerOpen(false)}
         />
       ) : null}
@@ -965,7 +1426,7 @@ export default function App() {
         />
       ) : null}
 
-      {/* Direct variant Stock adjust Modal */}
+      {/* Stock Adjust Modal */}
       {adjustmentProduct && adjustmentVariant ? (
         <div className="modal-backdrop">
           <div className="modal-content glass-card" style={{ maxWidth: '400px' }}>
@@ -1037,7 +1498,7 @@ export default function App() {
               <ShieldX className="text-danger" size={24} /> Reset Database Seeding
             </h3>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5, margin: '0 0 20px 0' }}>
-              This will truncate all active products, variants, stock levels, and audit logs. The database will be seeded with standard demo inventory items (HDMI, Mice, Reams).
+              This will truncate all active products, variants, stock levels, suppliers, purchase orders, and system logs. The database will be seeded with standard demo inventory.
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary" onClick={() => setShowResetConfirm(false)} disabled={resetting}>
@@ -1047,6 +1508,143 @@ export default function App() {
                 {resetting ? 'Resetting...' : 'Confirm Reset Seeding'}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Add Partner (Supplier) Modal */}
+      {addSupplierOpen ? (
+        <div className="modal-backdrop">
+          <div className="modal-content glass-card" style={{ maxWidth: '450px' }}>
+            <div className="flex-between" style={{ marginBottom: '16px' }}>
+              <h3>Add Supplier Partner</h3>
+              <button className="btn btn-secondary" onClick={() => setAddSupplierOpen(false)} style={{ padding: '8px' }}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleCreateSupplier}>
+              <div style={{ marginBottom: '12px' }}>
+                <label htmlFor="sup-name">Supplier Contact Name *</label>
+                <input id="sup-name" type="text" value={supplierName} onChange={e => setSupplierName(e.target.value)} required placeholder="e.g. John Doe" />
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <label htmlFor="sup-comp">Company Name</label>
+                <input id="sup-comp" type="text" value={supplierCompany} onChange={e => setSupplierCompany(e.target.value)} placeholder="e.g. Apex Suppliers Ltd" />
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <label htmlFor="sup-email">Email Address</label>
+                <input id="sup-email" type="email" value={supplierEmail} onChange={e => setSupplierEmail(e.target.value)} placeholder="name@company.com" />
+              </div>
+              <div style={{ marginBottom: '16px' }}>
+                <label htmlFor="sup-phone">Phone Number</label>
+                <input id="sup-phone" type="text" value={supplierPhone} onChange={e => setSupplierPhone(e.target.value)} placeholder="+91 98765..." />
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setAddSupplierOpen(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save Supplier</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Add Purchase Order Modal */}
+      {addPoOpen ? (
+        <div className="modal-backdrop">
+          <div className="modal-content glass-card" style={{ maxWidth: '600px' }}>
+            <div className="flex-between" style={{ marginBottom: '16px' }}>
+              <h3>Create Purchase Order</h3>
+              <button className="btn btn-secondary" onClick={() => setAddPoOpen(false)} style={{ padding: '8px' }}><X size={18} /></button>
+            </div>
+            
+            <form onSubmit={handleCreatePO}>
+              <div style={{ marginBottom: '16px' }}>
+                <label htmlFor="po-sup">Select Supplier Partner</label>
+                <select id="po-sup" value={poSupplierId} onChange={e => setPoSupplierId(e.target.value)} required>
+                  <option value="">-- Choose Supplier --</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.company || 'Private'})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label>Order Items</label>
+                {poItems.map((item, idx) => (
+                  <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                    <select 
+                      value={item.variantId} 
+                      onChange={e => {
+                        const updated = [...poItems];
+                        updated[idx].variantId = e.target.value;
+                        // Pre-populate standard cost if available
+                        const matched = getFlatVariants().find(v => v.id === e.target.value);
+                        if (matched) updated[idx].cost = matched.cost || 100;
+                        setPoItems(updated);
+                      }}
+                      style={{ width: '50%' }}
+                      required
+                    >
+                      <option value="">-- Select Product Variant --</option>
+                      {getFlatVariants().map(v => (
+                        <option key={v.id} value={v.id}>{v.productName} - {v.name} ({v.sku})</option>
+                      ))}
+                    </select>
+                    
+                    <input 
+                      type="number" 
+                      placeholder="Qty" 
+                      value={item.quantityOrdered} 
+                      onChange={e => {
+                        const updated = [...poItems];
+                        updated[idx].quantityOrdered = parseInt(e.target.value) || 0;
+                        setPoItems(updated);
+                      }}
+                      style={{ width: '20%' }}
+                      min="1"
+                      required
+                    />
+                    
+                    <input 
+                      type="number" 
+                      placeholder="Cost" 
+                      value={item.cost} 
+                      onChange={e => {
+                        const updated = [...poItems];
+                        updated[idx].cost = parseFloat(e.target.value) || 0;
+                        setPoItems(updated);
+                      }}
+                      style={{ width: '25%' }}
+                      min="0.01"
+                      step="0.01"
+                      required
+                    />
+
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => setPoItems(poItems.filter((_, i) => i !== idx))}
+                      disabled={poItems.length === 1}
+                      style={{ padding: '6px', background: 'transparent', border: 'none' }}
+                    >
+                      <Trash2 size={16} className="text-danger" />
+                    </button>
+                  </div>
+                ))}
+                
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setPoItems([...poItems, { variantId: '', quantityOrdered: 5, cost: 100 }])}
+                  style={{ padding: '6px 12px', fontSize: '12px', marginTop: '6px' }}
+                >
+                  + Add Item Row
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setAddPoOpen(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create PO Draft</button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}
