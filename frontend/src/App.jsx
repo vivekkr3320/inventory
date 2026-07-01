@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Package, Search, Plus, Camera, Settings, LogOut, 
-  Sparkles, ShieldAlert, ArrowUpDown, History, Key, CheckCircle, RefreshCw
+  Sparkles, ShieldAlert, ArrowUpDown, History, Key, CheckCircle, RefreshCw, ShoppingBag
 } from 'lucide-react';
 import BarcodeScanner from './components/BarcodeScanner';
 import AddProductModal from './components/AddProductModal';
@@ -23,38 +23,42 @@ export default function App() {
   const [filterLowStock, setFilterLowStock] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Settings BYOK state
+  // Settings state (BYOK & Shopify)
   const [showSettings, setShowSettings] = useState(false);
   const [visionProvider, setVisionProvider] = useState('gemini');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [hasApiKeySaved, setHasApiKeySaved] = useState(false);
+  const [shopifyShopUrl, setShopifyShopUrl] = useState('');
+  const [shopifyAccessToken, setShopifyAccessToken] = useState('');
+  const [hasShopifyTokenSaved, setHasShopifyTokenSaved] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState('');
+
+  // Shopify Sync state
+  const [syncingShopify, setSyncingShopify] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
 
   // Modals state
   const [scannerOpen, setScannerOpen] = useState(false);
   const [addProductOpen, setAddProductOpen] = useState(false);
   const [prefilledBarcode, setPrefilledBarcode] = useState('');
   const [adjustmentProduct, setAdjustmentProduct] = useState(null);
+  const [adjustmentVariant, setAdjustmentVariant] = useState(null);
   const [stockDelta, setStockDelta] = useState('1');
   const [stockReason, setStockReason] = useState('received');
   const [stockNote, setStockNote] = useState('');
 
-  // Computed headers
   const apiHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-  // Fetch all dashboard summary and products
   const fetchDashboardData = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      // Fetch summary
       const sumRes = await fetch('/api/dashboard/summary', { headers: apiHeaders });
       if (sumRes.ok) {
         const sumData = await sumRes.json();
         setSummary(sumData);
       }
 
-      // Fetch products
       let prodUrl = `/api/products?search=${search}`;
       if (filterLowStock) prodUrl += '&lowStock=true';
       const prodRes = await fetch(prodUrl, { headers: apiHeaders });
@@ -69,7 +73,6 @@ export default function App() {
     }
   };
 
-  // Fetch settings status
   const fetchSettings = async () => {
     if (!token) return;
     try {
@@ -78,6 +81,8 @@ export default function App() {
         const data = await res.json();
         setVisionProvider(data.visionProvider);
         setHasApiKeySaved(data.hasApiKey);
+        setShopifyShopUrl(data.shopifyShopUrl);
+        setHasShopifyTokenSaved(data.hasShopifyToken);
       }
     } catch (e) {
       console.error('Fetch settings error:', e);
@@ -91,7 +96,6 @@ export default function App() {
     }
   }, [token, search, filterLowStock]);
 
-  // Auth: handle sign in/up
   const handleAuth = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -107,9 +111,7 @@ export default function App() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
+      if (!res.ok) throw new Error(data.error || 'Authentication failed');
 
       if (isSignup) {
         setIsSignup(false);
@@ -132,7 +134,6 @@ export default function App() {
     setUser(null);
   };
 
-  // Settings updates
   const saveSettings = async (e) => {
     e.preventDefault();
     setSettingsSuccess('');
@@ -142,12 +143,15 @@ export default function App() {
         headers: { 'Content-Type': 'application/json', ...apiHeaders },
         body: JSON.stringify({
           visionProvider,
-          apiKey: apiKeyInput || null
+          apiKey: apiKeyInput || null,
+          shopifyShopUrl,
+          shopifyAccessToken: shopifyAccessToken || null
         })
       });
       if (res.ok) {
-        setSettingsSuccess('API configurations updated successfully!');
+        setSettingsSuccess('Credentials updated successfully!');
         setApiKeyInput('');
+        setShopifyAccessToken('');
         fetchSettings();
         setTimeout(() => setSettingsSuccess(''), 3000);
       }
@@ -156,7 +160,7 @@ export default function App() {
     }
   };
 
-  const clearApiKey = async () => {
+  const clearVisionApiKey = async () => {
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -165,7 +169,7 @@ export default function App() {
       });
       if (res.ok) {
         setHasApiKeySaved(false);
-        setSettingsSuccess('Vision API Key deleted. Reverting to Mock Sandbox Mode.');
+        setSettingsSuccess('Vision API Key deleted. Reverting to Sandbox Mode.');
         setTimeout(() => setSettingsSuccess(''), 3000);
       }
     } catch (err) {
@@ -173,48 +177,91 @@ export default function App() {
     }
   };
 
-  // Barcode scan outcome handler
+  const clearShopifyCredentials = async () => {
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders },
+        body: JSON.stringify({ clearShopify: true })
+      });
+      if (res.ok) {
+        setShopifyShopUrl('');
+        setHasShopifyTokenSaved(false);
+        setSettingsSuccess('Shopify credentials cleared.');
+        setTimeout(() => setSettingsSuccess(''), 3000);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Shopify sync trigger
+  const triggerShopifySync = async () => {
+    setSyncingShopify(true);
+    setSyncMessage('Synchronizing inventory with Shopify...');
+    try {
+      const res = await fetch('/api/integrations/shopify/sync', {
+        method: 'POST',
+        headers: apiHeaders
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Shopify sync failed');
+      
+      const sourceStr = data.sandbox ? '(Sandbox Mock Mode)' : '(Live API)';
+      setSyncMessage(`Sync Complete ${sourceStr}: Created ${data.createdCount} products, updated ${data.updatedCount} products.`);
+      fetchDashboardData();
+      setTimeout(() => setSyncMessage(''), 5000);
+    } catch (err) {
+      setSyncMessage(`Sync Error: ${err.message}`);
+    } finally {
+      setSyncingShopify(false);
+    }
+  };
+
   const handleBarcodeScanned = async (barcode) => {
     setScannerOpen(false);
-    
-    // Look up barcode locally first
     try {
       const res = await fetch(`/api/products/lookup/${barcode}`, { headers: apiHeaders });
       if (!res.ok) throw new Error('Lookup failed');
       const data = await res.json();
       
       if (data.found && data.product) {
-        // Product exists -> Open stock adjustment quick modal
-        setAdjustmentProduct(data.product);
-        setStockDelta('1');
-        setStockReason('received');
+        // Matched a specific variant
+        const matched = data.product;
+        // Fetch parent details to populate correctly
+        const parentRes = await fetch(`/api/products/${matched.id}`, { headers: apiHeaders });
+        if (parentRes.ok) {
+          const parent = await parentRes.json();
+          const targetVariant = parent.variants.find(v => v.id === matched.variantId);
+          setAdjustmentProduct(parent);
+          setAdjustmentVariant(targetVariant);
+          setStockDelta('1');
+          setStockReason('received');
+        }
       } else if (data.source === 'open_food_facts' && data.product) {
-        // Found externally (Open Food Facts) -> Pre-populate fields in creation form
         setPrefilledBarcode(barcode);
         setAddProductOpen(true);
-        // Force prefill initial values by updating state or let AddProductModal handle
       } else {
-        // Not found anywhere -> Open clean Add Product form prefilled with barcode
         setPrefilledBarcode(barcode);
         setAddProductOpen(true);
       }
     } catch (e) {
       console.error(e);
-      // Fallback
       setPrefilledBarcode(barcode);
       setAddProductOpen(true);
     }
   };
 
-  // Submit stock adjustments
   const handleStockAdjustment = async (e) => {
     e.preventDefault();
+    if (!adjustmentVariant) return;
+
     try {
       const res = await fetch('/api/stock/movements', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...apiHeaders },
         body: JSON.stringify({
-          productId: adjustmentProduct.id,
+          variantId: adjustmentVariant.id,
           quantityDelta: parseInt(stockDelta),
           reason: stockReason,
           referenceNote: stockNote
@@ -223,6 +270,7 @@ export default function App() {
 
       if (res.ok) {
         setAdjustmentProduct(null);
+        setAdjustmentVariant(null);
         setStockNote('');
         fetchDashboardData();
       } else {
@@ -235,7 +283,6 @@ export default function App() {
   };
 
   if (!token) {
-    // Auth login/signup page UI
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: '16px' }}>
         <div className="glass-card" style={{ width: '100%', maxWidth: '400px', padding: '32px' }}>
@@ -244,7 +291,7 @@ export default function App() {
               <Package size={32} />
             </div>
             <h2 style={{ margin: 0 }}>VividInventory</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '4px 0 0 0' }}>AI-Powered Stock Operations</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '4px 0 0 0' }}>Retail & D2C Stock Engine</p>
           </div>
 
           {authError ? (
@@ -263,7 +310,7 @@ export default function App() {
                   value={authOrgName} 
                   onChange={e => setAuthOrgName(e.target.value)} 
                   required 
-                  placeholder="e.g. Acme Stores" 
+                  placeholder="e.g. Vintage Apparel Co." 
                 />
               </div>
             ) : null}
@@ -322,11 +369,21 @@ export default function App() {
           <Package className="text-primary" size={28} />
           <div>
             <h3 style={{ margin: 0, lineHeight: 1.1 }}>VividInventory</h3>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{user?.orgName || 'Loading...'}</span>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{user?.orgName} (Retail & D2C)</span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button className="btn btn-secondary" onClick={() => setShowSettings(!showSettings)} style={{ padding: '10px' }}>
+          <button 
+            className="btn btn-secondary" 
+            onClick={triggerShopifySync} 
+            disabled={syncingShopify}
+            style={{ gap: '6px', color: hasShopifyTokenSaved ? 'var(--success)' : 'var(--text-main)' }}
+            title="Sync Shopify"
+          >
+            {syncingShopify ? <RefreshCw className="animate-spin" size={16} /> : <ShoppingBag size={16} />}
+            Sync Shopify
+          </button>
+          <button className="btn btn-secondary" onClick={() => setShowSettings(!showSettings)} style={{ padding: '10px' }} title="Settings">
             <Settings size={18} />
           </button>
           <button className="btn btn-secondary" onClick={handleLogout} style={{ padding: '10px' }} title="Log Out">
@@ -335,16 +392,21 @@ export default function App() {
         </div>
       </header>
 
-      {/* Settings BYOK Box */}
+      {/* Sync Status Banner */}
+      {syncMessage ? (
+        <div className="badge badge-success" style={{ width: '100%', padding: '12px', borderRadius: '8px', marginBottom: '24px', textTransform: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Sparkles size={16} /> {syncMessage}
+        </div>
+      ) : null}
+
+      {/* Settings Panel */}
       {showSettings ? (
         <div className="glass-card" style={{ marginBottom: '32px', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
           <div className="flex-between" style={{ marginBottom: '16px' }}>
             <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Key className="text-primary" size={18} /> Vision AI Settings (BYOK)
+              <Settings className="text-primary" size={18} /> Integrations & Credentials
             </h4>
-            <span className={`badge ${hasApiKeySaved ? 'badge-success' : 'badge-warning'}`}>
-              {hasApiKeySaved ? 'API KEY SAVED' : 'SANDBOX MODE'}
-            </span>
+            <span className="badge badge-success">Configured</span>
           </div>
 
           {settingsSuccess ? (
@@ -353,44 +415,74 @@ export default function App() {
             </div>
           ) : null}
 
-          <form onSubmit={saveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <label htmlFor="settings-provider">Vision API Provider</label>
-                <select 
-                  id="settings-provider"
-                  value={visionProvider} 
-                  onChange={e => setVisionProvider(e.target.value)}
-                >
-                  <option value="gemini">Google Gemini API (gemini-2.5-flash)</option>
-                  <option value="openai">OpenAI API (gpt-4o-mini)</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="settings-key">{hasApiKeySaved ? 'Overwrite API Key' : 'Enter API Key'}</label>
-                <input 
-                  id="settings-key"
-                  type="password" 
-                  value={apiKeyInput} 
-                  onChange={e => setApiKeyInput(e.target.value)} 
-                  placeholder={hasApiKeySaved ? '••••••••••••••••' : 'AI_API_KEY_...'}
-                />
+          <form onSubmit={saveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Vision BYOK */}
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px' }}>
+              <h5 style={{ margin: '0 0 12px 0' }}>Vision AI Credentials</h5>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label htmlFor="set-prov">Provider</label>
+                  <select id="set-prov" value={visionProvider} onChange={e => setVisionProvider(e.target.value)}>
+                    <option value="gemini">Google Gemini API (gemini-2.5-flash)</option>
+                    <option value="openai">OpenAI API (gpt-4o-mini)</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="set-key">API Key</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      id="set-key"
+                      type="password" 
+                      value={apiKeyInput} 
+                      onChange={e => setApiKeyInput(e.target.value)} 
+                      placeholder={hasApiKeySaved ? '••••••••••••••••' : 'AI_API_KEY_...'}
+                    />
+                    {hasApiKeySaved ? (
+                      <button type="button" className="btn btn-danger" onClick={clearVisionApiKey}>Delete</button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </div>
+
+            {/* Shopify BYOK */}
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px' }}>
+              <h5 style={{ margin: '0 0 12px 0' }}>Shopify Store Integration</h5>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label htmlFor="set-shop">Shop URL</label>
+                  <input 
+                    id="set-shop"
+                    type="text" 
+                    value={shopifyShopUrl} 
+                    onChange={e => setShopifyShopUrl(e.target.value)} 
+                    placeholder="e.g. mystore.myshopify.com"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="set-token">Admin Access Token</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      id="set-token"
+                      type="password" 
+                      value={shopifyAccessToken} 
+                      onChange={e => setShopifyAccessToken(e.target.value)} 
+                      placeholder={hasShopifyTokenSaved ? '••••••••••••••••' : 'shpat_...'}
+                    />
+                    {hasShopifyTokenSaved ? (
+                      <button type="button" className="btn btn-danger" onClick={clearShopifyCredentials}>Clear</button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              {hasApiKeySaved ? (
-                <button type="button" className="btn btn-danger" onClick={clearApiKey} style={{ padding: '10px 16px' }}>
-                  Delete Saved Key
-                </button>
-              ) : null}
-              <button type="submit" className="btn btn-primary" style={{ padding: '10px 20px' }}>
-                Save Settings
+              <button type="submit" className="btn btn-primary" style={{ padding: '10px 24px' }}>
+                Save Configurations
               </button>
             </div>
           </form>
-          <div style={{ marginTop: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
-            We encrypted saved keys using AES-256-GCM. Leaving it empty utilizes our **Mock Sandbox Mode** to let you try the image ingestion flow immediately without a key.
-          </div>
         </div>
       ) : null}
 
@@ -401,7 +493,7 @@ export default function App() {
             <Package size={28} />
           </div>
           <div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Active SKU Codes</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Unique Products</div>
             <div style={{ fontSize: '28px', fontWeight: 'bold' }}>{summary.skuCount}</div>
           </div>
         </div>
@@ -419,7 +511,7 @@ export default function App() {
             <ShieldAlert size={28} />
           </div>
           <div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Low Stock Items</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Low Stock Variants</div>
             <div style={{ fontSize: '28px', fontWeight: 'bold', color: summary.lowStockCount > 0 ? 'var(--danger)' : 'var(--text-main)' }}>
               {summary.lowStockCount}
             </div>
@@ -427,14 +519,14 @@ export default function App() {
         </div>
       </section>
 
-      {/* Main Panel grid (left table list, right recent ledger logs) */}
+      {/* Main Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: '32px', alignItems: 'flex-start' }}>
         
-        {/* Left: Product catalog list */}
+        {/* Left: Product Catalog */}
         <section className="glass-card" style={{ minHeight: '400px' }}>
           <div className="flex-between" style={{ flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
-            <h3 style={{ margin: 0 }}>Product Catalog</h3>
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>D2C Product Catalog</h3>
+            <div style={{ display: 'flex', gap: '12px' }}>
               <button 
                 className={`btn ${filterLowStock ? 'btn-danger' : 'btn-secondary'}`}
                 onClick={() => setFilterLowStock(!filterLowStock)}
@@ -442,118 +534,104 @@ export default function App() {
               >
                 Low Stock Only
               </button>
-              <button 
-                className="btn btn-secondary" 
-                onClick={() => {
-                  setPrefilledBarcode('');
-                  setScannerOpen(true);
-                }}
-                style={{ gap: '8px' }}
-              >
+              <button className="btn btn-secondary" onClick={() => { setPrefilledBarcode(''); setScannerOpen(true); }} style={{ gap: '8px' }}>
                 <Camera size={16} /> Scan Barcode
               </button>
-              <button 
-                className="btn btn-primary" 
-                onClick={() => {
-                  setPrefilledBarcode('');
-                  setAddProductOpen(true);
-                }}
-                style={{ gap: '8px' }}
-              >
+              <button className="btn btn-primary" onClick={() => { setPrefilledBarcode(''); setAddProductOpen(true); }} style={{ gap: '8px' }}>
                 <Plus size={16} /> Add Product
               </button>
             </div>
           </div>
 
-          {/* Search bar */}
           <div style={{ position: 'relative', marginBottom: '20px' }}>
             <Search style={{ position: 'absolute', left: '14px', top: '13px', color: 'var(--text-muted)' }} size={16} />
             <input 
               type="text" 
-              placeholder="Search by name, SKU, or barcode..."
+              placeholder="Search by title, SKU, or barcode..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{ paddingLeft: '40px' }}
             />
           </div>
 
-          {/* Table */}
           {loading ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <RefreshCw size={24} className="animate-spin text-primary" style={{ margin: '0 auto 12px' }} />
-              Loading product logs...
+              Loading catalog...
             </div>
           ) : products.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 20px' }}>
-              No products found. Click **Add Product** or **Scan Barcode** to populate stock.
+              No items found. Click **Add Product** or sync with Shopify.
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    <th style={{ padding: '12px 8px' }}>Product</th>
-                    <th style={{ padding: '12px 8px' }}>SKU/Barcode</th>
-                    <th style={{ padding: '12px 8px' }}>Category</th>
-                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>Stock Level</th>
-                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>Price</th>
-                    <th style={{ padding: '12px 8px', textAlign: 'center' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.map(p => {
-                    const isLow = p.total_quantity <= p.low_stock_threshold;
-                    return (
-                      <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: '14px' }}>
-                        <td style={{ padding: '16px 8px' }}>
-                          <div style={{ fontWeight: 600 }}>{p.name}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{p.brand || 'No brand'}</div>
-                        </td>
-                        <td style={{ padding: '16px 8px' }}>
-                          <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>SKU: {p.sku}</div>
-                          {p.barcode ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--primary)' }}>
-                              <Barcode size={12} /> {p.barcode}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td style={{ padding: '16px 8px' }}>
-                          <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px' }}>
-                            {p.category}
-                          </span>
-                        </td>
-                        <td style={{ padding: '16px 8px', textAlign: 'right' }}>
-                          <div style={{ fontWeight: 'bold' }}>{p.total_quantity}</div>
-                          <span className={`badge ${isLow ? 'badge-danger' : 'badge-success'}`} style={{ fontSize: '9px', padding: '2px 6px' }}>
-                            {isLow ? 'Low Stock' : 'In Stock'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '16px 8px', textAlign: 'right', fontWeight: '500' }}>
-                          ${p.price.toFixed(2)}
-                        </td>
-                        <td style={{ padding: '16px 8px', textAlign: 'center' }}>
-                          <button 
-                            className="btn btn-secondary" 
-                            style={{ padding: '6px 12px', fontSize: '12px' }}
-                            onClick={() => {
-                              setAdjustmentProduct(p);
-                              setStockDelta('1');
-                              setStockReason('received');
-                            }}
-                          >
-                            Update Stock
-                          </button>
-                        </td>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {products.map(p => (
+                <div key={p.id} style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'rgba(255,255,255,0.01)' }}>
+                  <div className="flex-between" style={{ marginBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '8px' }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '16px' }}>{p.name}</h4>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Category: {p.category}</span>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Total Stock</div>
+                      <div style={{ fontWeight: 'bold', fontSize: '18px' }}>{p.total_quantity}</div>
+                    </div>
+                  </div>
+
+                  {/* Variants nested table */}
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--text-muted)', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <th style={{ padding: '6px' }}>Variant</th>
+                        <th style={{ padding: '6px' }}>SKU/Barcode</th>
+                        <th style={{ padding: '6px', textAlign: 'right' }}>Price</th>
+                        <th style={{ padding: '6px', textAlign: 'right' }}>Stock</th>
+                        <th style={{ padding: '6px', textAlign: 'center' }}>Action</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {p.variants.map(v => {
+                        const isLow = v.total_quantity <= v.low_stock_threshold;
+                        return (
+                          <tr key={v.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                            <td style={{ padding: '8px 6px', fontWeight: 500 }}>{v.name}</td>
+                            <td style={{ padding: '8px 6px', color: 'var(--text-muted)' }}>
+                              <div>SKU: {v.sku}</div>
+                              {v.barcode ? <div style={{ fontSize: '10px', color: 'var(--primary)' }}>BC: {v.barcode}</div> : null}
+                            </td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>${v.price.toFixed(2)}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+                              <span style={{ fontWeight: 'bold', marginRight: '6px' }}>{v.total_quantity}</span>
+                              <span className={`badge ${isLow ? 'badge-danger' : 'badge-success'}`} style={{ fontSize: '8px', padding: '1px 4px' }}>
+                                {isLow ? 'Low' : 'OK'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                              <button 
+                                className="btn btn-secondary" 
+                                style={{ padding: '4px 8px', fontSize: '11px' }}
+                                onClick={() => {
+                                  setAdjustmentProduct(p);
+                                  setAdjustmentVariant(v);
+                                  setStockDelta('1');
+                                  setStockReason('received');
+                                }}
+                              >
+                                Adjust
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </div>
           )}
         </section>
 
-        {/* Right: Recent ledger logs */}
+        {/* Right: Ledger Logs */}
         <section className="glass-card">
           <h3 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <History className="text-primary" size={20} /> Stock Ledger
@@ -584,6 +662,9 @@ export default function App() {
                     </div>
                     <div style={{ flexGrow: 1 }}>
                       <div style={{ fontWeight: 600 }}>{m.product_name}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Variant: <span style={{ color: 'var(--text-main)', fontWeight: 500 }}>{m.variant_name}</span> (SKU: {m.product_sku})
+                      </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                         Reason: {m.reason} {m.reference_note ? `(${m.reference_note})` : ''}
                       </div>
@@ -621,20 +702,21 @@ export default function App() {
       ) : null}
 
       {/* Stock Adjustment Quick Modal */}
-      {adjustmentProduct ? (
+      {adjustmentProduct && adjustmentVariant ? (
         <div className="modal-backdrop">
           <div className="modal-content glass-card" style={{ maxWidth: '400px' }}>
             <div className="flex-between" style={{ marginBottom: '16px' }}>
               <h3 style={{ margin: 0 }}>Update Stock Level</h3>
-              <button className="btn btn-secondary" onClick={() => setAdjustmentProduct(null)} style={{ padding: '8px' }}>
+              <button className="btn btn-secondary" onClick={() => { setAdjustmentProduct(null); setAdjustmentVariant(null); }} style={{ padding: '8px' }}>
                 <X size={18} />
               </button>
             </div>
             
             <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
               <div style={{ fontWeight: 'bold' }}>{adjustmentProduct.name}</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>SKU: {adjustmentProduct.sku}</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Current Quantity: {adjustmentProduct.total_quantity}</div>
+              <div style={{ fontSize: '12px', color: 'var(--primary)', fontWeight: 500 }}>Variant: {adjustmentVariant.name}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>SKU: {adjustmentVariant.sku}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Current Quantity: {adjustmentVariant.total_quantity}</div>
             </div>
 
             <form onSubmit={handleStockAdjustment}>
@@ -676,7 +758,7 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setAdjustmentProduct(null)}>
+                <button type="button" className="btn btn-secondary" onClick={() => { setAdjustmentProduct(null); setAdjustmentVariant(null); }}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary">

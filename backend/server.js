@@ -8,6 +8,7 @@ const dotenv = require('dotenv');
 const db = require('./db');
 const { encrypt, decrypt } = require('./services/cryptoService');
 const { extractProductFromImage } = require('./services/visionService');
+const { syncShopifyProducts } = require('./services/shopifyService');
 
 dotenv.config();
 
@@ -16,19 +17,16 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'inventory-tool-super-secret-key-12345';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'inventory-tool-refresh-secret-54321';
 
-// In-memory array to track valid refresh tokens (for simple token rotation)
 let refreshTokens = [];
 
 app.use(cors());
 app.use(express.json());
 
-// Set up Multer for memory storage of uploaded product photos
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-// Middleware to authenticate JWT token
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -42,7 +40,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Helper: Generate tokens
 function generateAccessToken(user) {
   return jwt.sign(
     { userId: user.id, orgId: user.org_id, email: user.email, role: user.role },
@@ -72,7 +69,6 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    // Check if user already exists
     const existingUser = await db('users').where({ email }).first();
     if (existingUser) {
       return res.status(400).json({ error: 'User with this email already exists' });
@@ -84,13 +80,7 @@ app.post('/api/auth/signup', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     await db.transaction(async tr => {
-      // 1. Create Organization
-      await tr('organizations').insert({
-        id: orgId,
-        name: orgName
-      });
-
-      // 2. Create User
+      await tr('organizations').insert({ id: orgId, name: orgName });
       await tr('users').insert({
         id: userId,
         org_id: orgId,
@@ -98,15 +88,13 @@ app.post('/api/auth/signup', async (req, res) => {
         password_hash: passwordHash,
         role: 'admin'
       });
-
-      // 3. Create Default Settings (Sandbox Mode ON initially)
       await tr('organization_settings').insert({
         org_id: orgId,
         vision_provider: 'gemini',
-        vision_api_key_encrypted: null
+        vision_api_key_encrypted: null,
+        shopify_shop_url: null,
+        shopify_access_token_encrypted: null
       });
-
-      // 4. Create Default Stock Location
       await tr('stock_locations').insert({
         id: locationId,
         org_id: orgId,
@@ -155,7 +143,6 @@ app.post('/api/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed. ' + error.message });
   }
 });
@@ -167,8 +154,6 @@ app.post('/api/auth/refresh', (req, res) => {
 
   jwt.verify(token, JWT_REFRESH_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid or expired refresh token' });
-    
-    // Generate new access token
     const accessToken = jwt.sign(
       { userId: user.userId, orgId: user.orgId, email: user.email, role: user.role },
       JWT_SECRET,
@@ -185,7 +170,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ----------------------------------------------------
-// SETTINGS ENDPOINTS (BYOK Config)
+// SETTINGS ENDPOINTS (BYOK & SHOPIFY CONFIG)
 // ----------------------------------------------------
 
 app.get('/api/settings', authenticateToken, async (req, res) => {
@@ -195,12 +180,12 @@ app.get('/api/settings', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Settings not found' });
     }
     
-    const hasKey = !!settings.vision_api_key_encrypted;
-    
     res.json({
       visionProvider: settings.vision_provider,
-      hasApiKey: hasKey,
-      sandboxMode: !hasKey // sandbox is active if no key is saved
+      hasApiKey: !!settings.vision_api_key_encrypted,
+      sandboxMode: !settings.vision_api_key_encrypted,
+      shopifyShopUrl: settings.shopify_shop_url || '',
+      hasShopifyToken: !!settings.shopify_access_token_encrypted
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve settings: ' + error.message });
@@ -208,21 +193,28 @@ app.get('/api/settings', authenticateToken, async (req, res) => {
 });
 
 app.put('/api/settings', authenticateToken, async (req, res) => {
-  const { visionProvider, apiKey, clearKey } = req.body;
+  const { visionProvider, apiKey, clearKey, shopifyShopUrl, shopifyAccessToken, clearShopify } = req.body;
   
   try {
-    const updateData = {
-      updated_at: db.fn.now()
-    };
+    const updateData = { updated_at: db.fn.now() };
     
-    if (visionProvider) {
-      updateData.vision_provider = visionProvider;
-    }
+    if (visionProvider) updateData.vision_provider = visionProvider;
     
     if (clearKey) {
       updateData.vision_api_key_encrypted = null;
     } else if (apiKey) {
       updateData.vision_api_key_encrypted = encrypt(apiKey);
+    }
+
+    if (shopifyShopUrl !== undefined) {
+      updateData.shopify_shop_url = shopifyShopUrl;
+    }
+
+    if (clearShopify) {
+      updateData.shopify_access_token_encrypted = null;
+      updateData.shopify_shop_url = null;
+    } else if (shopifyAccessToken) {
+      updateData.shopify_access_token_encrypted = encrypt(shopifyAccessToken);
     }
     
     await db('organization_settings')
@@ -236,122 +228,204 @@ app.put('/api/settings', authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// PRODUCT CATALOG ENDPOINTS
+// SHOPIFY INTEGRATION SYNC ENDPOINT
+// ----------------------------------------------------
+
+app.post('/api/integrations/shopify/sync', authenticateToken, async (req, res) => {
+  try {
+    const settings = await db('organization_settings').where({ org_id: req.user.orgId }).first();
+    if (!settings) return res.status(404).json({ error: 'Settings not found' });
+
+    let shopifyToken = null;
+    let useSandbox = true;
+
+    if (settings.shopify_access_token_encrypted) {
+      shopifyToken = decrypt(settings.shopify_access_token_encrypted);
+      useSandbox = false;
+    }
+
+    const result = await syncShopifyProducts({
+      orgId: req.user.orgId,
+      userId: req.user.userId,
+      shopUrl: settings.shopify_shop_url,
+      accessToken: shopifyToken,
+      useSandbox
+    });
+
+    res.json({
+      success: true,
+      sandbox: useSandbox,
+      ...result
+    });
+  } catch (error) {
+    console.error('Shopify sync error:', error);
+    res.status(500).json({ error: 'Failed to synchronize with Shopify: ' + error.message });
+  }
+});
+
+// ----------------------------------------------------
+// PRODUCT CATALOG ENDPOINTS (VARIANT-AWARE)
 // ----------------------------------------------------
 
 app.get('/api/products', authenticateToken, async (req, res) => {
   const { search, category, lowStock } = req.query;
   
   try {
-    let query = db('products')
-      .leftJoin('stock_levels', 'products.id', 'stock_levels.product_id')
-      .select(
-        'products.*',
-        db.raw('COALESCE(SUM(stock_levels.quantity), 0) as total_quantity')
-      )
-      .where('products.org_id', req.user.orgId)
-      .groupBy('products.id');
+    let query = db('products').where({ org_id: req.user.orgId });
+
+    if (category) {
+      query = query.andWhere({ category });
+    }
 
     if (search) {
       query = query.andWhere(function() {
-        this.where('products.name', 'like', `%${search}%`)
-            .orWhere('products.sku', 'like', `%${search}%`)
-            .orWhere('products.barcode', 'like', `%${search}%`);
+        this.where('name', 'like', `%${search}%`)
+            .orWhere('description', 'like', `%${search}%`);
       });
     }
 
-    if (category) {
-      query = query.andWhere('products.category', category);
+    const products = await query;
+    const result = [];
+
+    for (const p of products) {
+      // Find variants of this product and aggregate their quantities
+      let varQuery = db('product_variants')
+        .leftJoin('stock_levels', 'product_variants.id', 'stock_levels.variant_id')
+        .select(
+          'product_variants.*',
+          db.raw('COALESCE(SUM(stock_levels.quantity), 0) as total_quantity')
+        )
+        .where({ 'product_variants.product_id': p.id })
+        .groupBy('product_variants.id');
+
+      let variants = await varQuery;
+      variants = variants.map(v => ({
+        ...v,
+        price: Number(v.price),
+        cost: Number(v.cost),
+        total_quantity: Number(v.total_quantity)
+      }));
+
+      // If searching, check if search queries matched SKU or Barcode in variants
+      let matchedVariants = variants;
+      if (search) {
+        matchedVariants = variants.filter(v => 
+          v.sku.toLowerCase().includes(search.toLowerCase()) || 
+          (v.barcode && v.barcode.toLowerCase().includes(search.toLowerCase()))
+        );
+      }
+
+      // If search query didn't match product details OR variant details, skip product
+      if (search && matchedVariants.length === 0 && !p.name.toLowerCase().includes(search.toLowerCase())) {
+        continue;
+      }
+
+      const totalQuantity = variants.reduce((sum, v) => sum + v.total_quantity, 0);
+      const isLow = variants.some(v => v.total_quantity <= v.low_stock_threshold);
+
+      result.push({
+        ...p,
+        variants: variants,
+        total_quantity: totalQuantity,
+        is_low_stock: isLow
+      });
     }
 
-    let products = await query;
-    
-    // SQLite can return string for aggregate SUM or COALESCE, let's format it to number
-    products = products.map(p => ({
-      ...p,
-      total_quantity: Number(p.total_quantity)
-    }));
-
+    let finalResponse = result;
     if (lowStock === 'true') {
-      products = products.filter(p => p.total_quantity <= p.low_stock_threshold);
+      finalResponse = result.filter(p => p.is_low_stock);
     }
 
-    res.json(products);
+    res.json(finalResponse);
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve products: ' + error.message });
   }
 });
 
 app.post('/api/products', authenticateToken, async (req, res) => {
-  const { name, sku, barcode, category, price, cost, description, primaryImageUrl, lowStockThreshold, initialStock } = req.body;
+  const { name, category, description, primaryImageUrl, variants } = req.body;
   
-  if (!name || !sku) {
-    return res.status(400).json({ error: 'Product name and SKU are required' });
+  if (!name || !variants || variants.length === 0) {
+    return res.status(400).json({ error: 'Product name and at least one variant are required' });
   }
 
   try {
-    const existingSku = await db('products').where({ org_id: req.user.orgId, sku }).first();
-    if (existingSku) {
-      return res.status(400).json({ error: 'Product SKU already exists' });
-    }
+    // Check SKU collisions in variants
+    for (const v of variants) {
+      const existingVar = await db('product_variants')
+        .join('products', 'product_variants.product_id', 'products.id')
+        .where({ 'products.org_id': req.user.orgId, 'product_variants.sku': v.sku })
+        .first();
+      if (existingVar) {
+        return res.status(400).json({ error: `SKU code "${v.sku}" is already in use by another product` });
+      }
 
-    if (barcode) {
-      const existingBarcode = await db('products').where({ org_id: req.user.orgId, barcode }).first();
-      if (existingBarcode) {
-        return res.status(400).json({ error: 'Product Barcode already exists' });
+      if (v.barcode) {
+        const existingBarcode = await db('product_variants')
+          .join('products', 'product_variants.product_id', 'products.id')
+          .where({ 'products.org_id': req.user.orgId, 'product_variants.barcode': v.barcode })
+          .first();
+        if (existingBarcode) {
+          return res.status(400).json({ error: `Barcode "${v.barcode}" is already in use by another product` });
+        }
       }
     }
 
     const productId = crypto.randomUUID();
-    const movementId = crypto.randomUUID();
-    const levelId = crypto.randomUUID();
-
-    // Get default location
     const defaultLoc = await db('stock_locations').where({ org_id: req.user.orgId }).first();
+
     if (!defaultLoc) {
       return res.status(500).json({ error: 'Default stock location missing' });
     }
 
     await db.transaction(async tr => {
-      // 1. Insert product
+      // 1. Insert parent product
       await tr('products').insert({
         id: productId,
         org_id: req.user.orgId,
         name,
-        sku,
-        barcode: barcode || null,
-        category: category || 'Uncategorized',
-        price: price || 0.00,
-        cost: cost || 0.00,
+        category: category || 'General',
         description: description || '',
-        primary_image_url: primaryImageUrl || null,
-        low_stock_threshold: lowStockThreshold || 5
+        primary_image_url: primaryImageUrl || null
       });
 
-      // 2. Insert stock level
-      await tr('stock_levels').insert({
-        id: levelId,
-        product_id: productId,
-        location_id: defaultLoc.id,
-        quantity: initialStock || 0
-      });
-
-      // 3. Log movement if initial stock is > 0
-      if (initialStock && initialStock > 0) {
-        await tr('stock_movements').insert({
-          id: movementId,
+      // 2. Insert variants and stock values
+      for (const v of variants) {
+        const variantId = crypto.randomUUID();
+        await tr('product_variants').insert({
+          id: variantId,
           product_id: productId,
-          location_id: defaultLoc.id,
-          user_id: req.user.userId,
-          quantity_delta: initialStock,
-          reason: 'received',
-          reference_note: 'Initial stock intake'
+          name: v.name || 'Default',
+          sku: v.sku,
+          barcode: v.barcode || null,
+          price: v.price || 0.00,
+          cost: v.cost || 0.00,
+          low_stock_threshold: v.lowStockThreshold || 5
         });
+
+        const initialStock = parseInt(v.initialStock) || 0;
+        await tr('stock_levels').insert({
+          id: crypto.randomUUID(),
+          variant_id: variantId,
+          location_id: defaultLoc.id,
+          quantity: initialStock
+        });
+
+        if (initialStock > 0) {
+          await tr('stock_movements').insert({
+            id: crypto.randomUUID(),
+            variant_id: variantId,
+            location_id: defaultLoc.id,
+            user_id: req.user.userId,
+            quantity_delta: initialStock,
+            reason: 'received',
+            reference_note: 'Initial product creation intake'
+          });
+        }
       }
     });
 
-    const newProduct = await db('products').where({ id: productId }).first();
-    res.status(201).json({ ...newProduct, total_quantity: initialStock || 0 });
+    res.status(201).json({ message: 'Product and variants created successfully', productId });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create product: ' + error.message });
@@ -365,25 +439,40 @@ app.get('/api/products/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    const levels = await db('stock_levels')
-      .join('stock_locations', 'stock_levels.location_id', 'stock_locations.id')
-      .select('stock_locations.name as location_name', 'stock_levels.location_id', 'stock_levels.quantity')
-      .where({ 'stock_levels.product_id': product.id });
+    const variants = await db('product_variants')
+      .leftJoin('stock_levels', 'product_variants.id', 'stock_levels.variant_id')
+      .select(
+        'product_variants.*',
+        db.raw('COALESCE(SUM(stock_levels.quantity), 0) as total_quantity')
+      )
+      .where({ 'product_variants.product_id': product.id })
+      .groupBy('product_variants.id');
 
+    // Fetch movements for all variants of this product
+    const variantIds = variants.map(v => v.id);
     const movements = await db('stock_movements')
+      .join('product_variants', 'stock_movements.variant_id', 'product_variants.id')
       .leftJoin('users', 'stock_movements.user_id', 'users.id')
       .join('stock_locations', 'stock_movements.location_id', 'stock_locations.id')
-      .select('stock_movements.*', 'users.email as user_email', 'stock_locations.name as location_name')
-      .where({ 'stock_movements.product_id': product.id })
+      .select(
+        'stock_movements.*',
+        'product_variants.name as variant_name',
+        'product_variants.sku as variant_sku',
+        'users.email as user_email',
+        'stock_locations.name as location_name'
+      )
+      .whereIn('stock_movements.variant_id', variantIds)
       .orderBy('stock_movements.created_at', 'desc')
       .limit(30);
 
-    const totalQuantity = levels.reduce((sum, l) => sum + l.quantity, 0);
-
     res.json({
       ...product,
-      total_quantity: totalQuantity,
-      locations: levels,
+      variants: variants.map(v => ({
+        ...v,
+        price: Number(v.price),
+        cost: Number(v.cost),
+        total_quantity: Number(v.total_quantity)
+      })),
       movements
     });
   } catch (error) {
@@ -391,78 +480,52 @@ app.get('/api/products/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/products/:id', authenticateToken, async (req, res) => {
-  const { name, sku, barcode, category, price, cost, description, primaryImageUrl, lowStockThreshold } = req.body;
-  
-  try {
-    const product = await db('products').where({ id: req.params.id, org_id: req.user.orgId }).first();
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-
-    // Verify sku collision
-    if (sku && sku !== product.sku) {
-      const existingSku = await db('products').where({ org_id: req.user.orgId, sku }).first();
-      if (existingSku) return res.status(400).json({ error: 'SKU code is already in use by another product' });
-    }
-
-    // Verify barcode collision
-    if (barcode && barcode !== product.barcode) {
-      const existingBarcode = await db('products').where({ org_id: req.user.orgId, barcode }).first();
-      if (existingBarcode) return res.status(400).json({ error: 'Barcode is already in use by another product' });
-    }
-
-    await db('products')
-      .where({ id: req.params.id })
-      .update({
-        name: name || product.name,
-        sku: sku || product.sku,
-        barcode: barcode === undefined ? product.barcode : (barcode || null),
-        category: category || product.category,
-        price: price !== undefined ? price : product.price,
-        cost: cost !== undefined ? cost : product.cost,
-        description: description !== undefined ? description : product.description,
-        primary_image_url: primaryImageUrl !== undefined ? primaryImageUrl : product.primary_image_url,
-        low_stock_threshold: lowStockThreshold !== undefined ? lowStockThreshold : product.low_stock_threshold,
-        updated_at: db.fn.now()
-      });
-
-    const updatedProduct = await db('products').where({ id: req.params.id }).first();
-    res.json(updatedProduct);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update product: ' + error.message });
-  }
-});
-
 app.delete('/api/products/:id', authenticateToken, async (req, res) => {
   try {
     const affected = await db('products').where({ id: req.params.id, org_id: req.user.orgId }).del();
     if (!affected) return res.status(404).json({ error: 'Product not found' });
-    res.json({ message: 'Product deleted successfully' });
+    res.json({ message: 'Product and all associated variants deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete product: ' + error.message });
   }
 });
 
-// Barcode Lookup: Query internal DB. If missing, look up public database (Open Food Facts API)
+// Barcode Lookup: Query variant tables. If missing, look up public database (Open Food Facts API)
 app.get('/api/products/lookup/:barcode', authenticateToken, async (req, res) => {
   const { barcode } = req.params;
   
   try {
-    // 1. Check local database
-    const localProduct = await db('products')
-      .leftJoin('stock_levels', 'products.id', 'stock_levels.product_id')
-      .select('products.*', db.raw('COALESCE(SUM(stock_levels.quantity), 0) as total_quantity'))
-      .where({ 'products.org_id': req.user.orgId, 'products.barcode': barcode })
-      .groupBy('products.id')
+    // 1. Check local database for matched barcode
+    const localVariant = await db('product_variants')
+      .join('products', 'product_variants.product_id', 'products.id')
+      .leftJoin('stock_levels', 'product_variants.id', 'stock_levels.variant_id')
+      .select(
+        'products.name as product_name',
+        'products.id as product_id',
+        'product_variants.*',
+        db.raw('COALESCE(SUM(stock_levels.quantity), 0) as total_quantity')
+      )
+      .where({ 'products.org_id': req.user.orgId, 'product_variants.barcode': barcode })
+      .groupBy('product_variants.id')
       .first();
 
-    if (localProduct) {
-      return res.json({ found: true, source: 'local', product: { ...localProduct, total_quantity: Number(localProduct.total_quantity) } });
+    if (localVariant) {
+      return res.json({
+        found: true,
+        source: 'local',
+        product: {
+          id: localVariant.product_id,
+          name: localVariant.product_name,
+          variantId: localVariant.id,
+          variantName: localVariant.name,
+          sku: localVariant.sku,
+          price: Number(localVariant.price),
+          total_quantity: Number(localVariant.total_quantity)
+        }
+      });
     }
 
-    // 2. Query Open Food Facts API (Completely free, no auth key required)
-    // URL: https://world.openfoodfacts.org/api/v0/product/[barcode].json
+    // 2. Query Open Food Facts API
     const externalUrl = `https://world.openfoodfacts.org/api/v0/product/${barcode}.json`;
     const response = await fetch(externalUrl);
     
@@ -504,9 +567,7 @@ app.post('/api/products/from-photo', authenticateToken, upload.single('photo'), 
 
   try {
     const settings = await db('organization_settings').where({ org_id: req.user.orgId }).first();
-    if (!settings) {
-      return res.status(404).json({ error: 'Organization settings not found' });
-    }
+    if (!settings) return res.status(404).json({ error: 'Organization settings not found' });
 
     let apiKey = null;
     let useSandbox = true;
@@ -536,22 +597,26 @@ app.post('/api/products/from-photo', authenticateToken, upload.single('photo'), 
 });
 
 // ----------------------------------------------------
-// STOCK MANAGEMENT ENDPOINTS
+// STOCK MANAGEMENT ENDPOINTS (VARIANT-BASED)
 // ----------------------------------------------------
 
 app.post('/api/stock/movements', authenticateToken, async (req, res) => {
-  const { productId, locationId, quantityDelta, reason, referenceNote } = req.body;
+  const { variantId, locationId, quantityDelta, reason, referenceNote } = req.body;
   
-  if (!productId || quantityDelta === undefined || !reason) {
-    return res.status(400).json({ error: 'productId, quantityDelta, and reason are required' });
+  if (!variantId || quantityDelta === undefined || !reason) {
+    return res.status(400).json({ error: 'variantId, quantityDelta, and reason are required' });
   }
 
   try {
-    // Verify product ownership
-    const product = await db('products').where({ id: productId, org_id: req.user.orgId }).first();
-    if (!product) return res.status(404).json({ error: 'Product not found' });
+    // Verify variant and product ownership
+    const variant = await db('product_variants')
+      .join('products', 'product_variants.product_id', 'products.id')
+      .select('product_variants.id', 'products.org_id')
+      .where({ 'product_variants.id': variantId, 'products.org_id': req.user.orgId })
+      .first();
 
-    // Fallback to primary location if locationId omitted
+    if (!variant) return res.status(404).json({ error: 'Product variant not found' });
+
     let targetLocationId = locationId;
     if (!targetLocationId) {
       const defaultLoc = await db('stock_locations').where({ org_id: req.user.orgId }).first();
@@ -561,24 +626,13 @@ app.post('/api/stock/movements', authenticateToken, async (req, res) => {
       if (!loc) return res.status(404).json({ error: 'Stock location not found' });
     }
 
-    const movementId = crypto.randomUUID();
-
     await db.transaction(async tr => {
-      // 1. Check if stock level row exists
       const level = await tr('stock_levels')
-        .where({ product_id: productId, location_id: targetLocationId })
+        .where({ variant_id: variantId, location_id: targetLocationId })
         .first();
 
       if (level) {
-        // Update existing row
         const newQty = level.quantity + Number(quantityDelta);
-        if (newQty < 0 && (reason === 'sold' || reason === 'adjustment')) {
-          // Allow negative stock but warn or check? Let's cap at 0 or allow. Inventory apps usually allow negative stock or block.
-          // Let's cap at 0 if you don't want negative, or just allow it. Let's allow but cap at 0 to avoid messy counts.
-          // Actually, standard practice is to allow negative stock (sometimes) or prevent it. Let's block it to ensure safety.
-          // return res.status(400).json({ error: `Insufficient stock. Current: ${level.quantity}, Delta: ${quantityDelta}` });
-        }
-        
         await tr('stock_levels')
           .where({ id: level.id })
           .update({
@@ -586,22 +640,20 @@ app.post('/api/stock/movements', authenticateToken, async (req, res) => {
             updated_at: tr.fn.now()
           });
       } else {
-        // Create new row
         if (Number(quantityDelta) < 0) {
-          return res.status(400).json({ error: `Cannot initialize stock with negative quantity: ${quantityDelta}` });
+          throw new Error(`Cannot initialize stock with negative quantity: ${quantityDelta}`);
         }
         await tr('stock_levels').insert({
           id: crypto.randomUUID(),
-          product_id: productId,
+          variant_id: variantId,
           location_id: targetLocationId,
           quantity: quantityDelta
         });
       }
 
-      // 2. Insert ledger movement log
       await tr('stock_movements').insert({
-        id: movementId,
-        product_id: productId,
+        id: crypto.randomUUID(),
+        variant_id: variantId,
         location_id: targetLocationId,
         user_id: req.user.userId,
         quantity_delta: quantityDelta,
@@ -613,12 +665,12 @@ app.post('/api/stock/movements', authenticateToken, async (req, res) => {
     const updatedLevels = await db('stock_levels')
       .join('stock_locations', 'stock_levels.location_id', 'stock_locations.id')
       .select('stock_locations.name as location_name', 'stock_levels.location_id', 'stock_levels.quantity')
-      .where({ 'stock_levels.product_id': productId });
+      .where({ 'stock_levels.variant_id': variantId });
 
     const totalQuantity = updatedLevels.reduce((sum, l) => sum + l.quantity, 0);
 
     res.json({
-      productId,
+      variantId,
       total_quantity: totalQuantity,
       locations: updatedLevels
     });
@@ -628,69 +680,60 @@ app.post('/api/stock/movements', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/stock/levels', authenticateToken, async (req, res) => {
-  try {
-    const levels = await db('stock_levels')
-      .join('products', 'stock_levels.product_id', 'products.id')
-      .join('stock_locations', 'stock_levels.location_id', 'stock_locations.id')
-      .select(
-        'products.name as product_name',
-        'products.sku as product_sku',
-        'stock_locations.name as location_name',
-        'stock_levels.*'
-      )
-      .where('products.org_id', req.user.orgId);
-    
-    res.json(levels);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch stock levels: ' + error.message });
-  }
-});
-
 // ----------------------------------------------------
 // DASHBOARD ENDPOINT
 // ----------------------------------------------------
 
 app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
   try {
-    // 1. SKU Count
     const products = await db('products').where({ org_id: req.user.orgId });
-    const skuCount = products.length;
+    const skuCount = products.length; // total parent products
 
-    // 2. Sum of stock levels and Valuation
     const levels = await db('stock_levels')
-      .join('products', 'stock_levels.product_id', 'products.id')
-      .select('stock_levels.quantity', 'products.cost', 'products.price', 'products.id', 'products.low_stock_threshold')
+      .join('product_variants', 'stock_levels.variant_id', 'product_variants.id')
+      .join('products', 'product_variants.product_id', 'products.id')
+      .select(
+        'stock_levels.quantity',
+        'product_variants.cost',
+        'product_variants.id',
+        'product_variants.low_stock_threshold'
+      )
       .where('products.org_id', req.user.orgId);
 
-    // Sum levels per product for low stock assessment
-    const productQuantities = {};
     let totalStockCount = 0;
     let totalValuation = 0.0;
+    const variantQuantities = {};
 
     levels.forEach(lvl => {
       totalStockCount += lvl.quantity;
       totalValuation += lvl.quantity * Number(lvl.cost || 0);
-      productQuantities[lvl.product_id] = (productQuantities[lvl.product_id] || 0) + lvl.quantity;
+      variantQuantities[lvl.id] = (variantQuantities[lvl.id] || 0) + lvl.quantity;
     });
 
+    // Low stock items: check if any variant is under threshold
+    const variants = await db('product_variants')
+      .join('products', 'product_variants.product_id', 'products.id')
+      .select('product_variants.id', 'product_variants.low_stock_threshold')
+      .where('products.org_id', req.user.orgId);
+
     let lowStockCount = 0;
-    products.forEach(p => {
-      const qty = productQuantities[p.id] || 0;
-      if (qty <= p.low_stock_threshold) {
+    variants.forEach(v => {
+      const qty = variantQuantities[v.id] || 0;
+      if (qty <= v.low_stock_threshold) {
         lowStockCount++;
       }
     });
 
-    // 3. Recent stock movements
     const recentMovements = await db('stock_movements')
-      .join('products', 'stock_movements.product_id', 'products.id')
+      .join('product_variants', 'stock_movements.variant_id', 'product_variants.id')
+      .join('products', 'product_variants.product_id', 'products.id')
       .join('stock_locations', 'stock_movements.location_id', 'stock_locations.id')
       .leftJoin('users', 'stock_movements.user_id', 'users.id')
       .select(
         'stock_movements.*',
         'products.name as product_name',
-        'products.sku as product_sku',
+        'product_variants.name as variant_name',
+        'product_variants.sku as product_sku',
         'stock_locations.name as location_name',
         'users.email as user_email'
       )
