@@ -18,8 +18,9 @@ module.exports = {
     client: 'postgresql',
     connection: process.env.DATABASE_URL,
     pool: {
-      min: 2,
-      max: 10
+      min: 0,
+      max: 2,
+      idleTimeoutMillis: 10000 // Close connections after 10 seconds of inactivity (serverless friendly)
     },
     migrations: {
       directory: './migrations'
