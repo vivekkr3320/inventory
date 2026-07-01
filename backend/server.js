@@ -27,17 +27,36 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  
-  if (!token) return res.status(401).json({ error: 'Access token missing' });
+async function authenticateToken(req, res, next) {
+  try {
+    let defaultOrg = await db('organizations').first();
+    if (!defaultOrg) {
+      const orgId = 'default-org-uuid';
+      const userId = 'default-user-uuid';
+      const locationId = 'default-loc-uuid';
+      
+      await db.transaction(async tr => {
+        await tr('organizations').insert({ id: orgId, name: 'My Inventory' });
+        await tr('users').insert({ id: userId, org_id: orgId, email: 'admin@vividinventory.local', password_hash: '', role: 'admin' });
+        await tr('organization_settings').insert({ org_id: orgId, vision_provider: 'gemini', vision_api_key_encrypted: null });
+        await tr('stock_locations').insert({ id: locationId, org_id: orgId, name: 'Primary Warehouse', description: 'Default warehouse' });
+      });
+      defaultOrg = { id: orgId, name: 'My Inventory' };
+    }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
-    req.user = user;
+    const defaultUser = await db('users').where({ org_id: defaultOrg.id }).first();
+    
+    req.user = {
+      userId: defaultUser.id,
+      orgId: defaultOrg.id,
+      email: defaultUser.email,
+      role: defaultUser.role
+    };
     next();
-  });
+  } catch (err) {
+    console.error("Auto-login setup failed:", err);
+    res.status(500).json({ error: 'Failed to initialize default database session: ' + err.message });
+  }
 }
 
 function generateAccessToken(user) {

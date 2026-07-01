@@ -8,8 +8,8 @@ import AddProductModal from './components/AddProductModal';
 
 export default function App() {
   // Auth state
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || null);
+  const [token, setToken] = useState('bypass');
+  const [user, setUser] = useState({ email: 'admin@vividinventory.local', orgName: 'My Inventory' });
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authOrgName, setAuthOrgName] = useState('');
@@ -392,9 +392,6 @@ export default function App() {
           </button>
           <button className="btn btn-secondary" onClick={() => setShowSettings(!showSettings)} style={{ padding: '10px' }} title="Settings">
             <Settings size={18} />
-          </button>
-          <button className="btn btn-secondary" onClick={handleLogout} style={{ padding: '10px' }} title="Log Out">
-            <LogOut size={18} />
           </button>
         </div>
       </header>
