@@ -41,6 +41,7 @@ export default function App() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [addProductOpen, setAddProductOpen] = useState(false);
   const [prefilledBarcode, setPrefilledBarcode] = useState('');
+  const [prefilledPhoto, setPrefilledPhoto] = useState(null);
   const [adjustmentProduct, setAdjustmentProduct] = useState(null);
   const [adjustmentVariant, setAdjustmentVariant] = useState(null);
   const [stockDelta, setStockDelta] = useState('1');
@@ -250,6 +251,12 @@ export default function App() {
       setPrefilledBarcode(barcode);
       setAddProductOpen(true);
     }
+  };
+
+  const handleAISnap = (file) => {
+    setScannerOpen(false);
+    setPrefilledPhoto(file);
+    setAddProductOpen(true);
   };
 
   const handleStockAdjustment = async (e) => {
@@ -684,6 +691,7 @@ export default function App() {
       {scannerOpen ? (
         <BarcodeScanner 
           onScan={handleBarcodeScanned}
+          onAISnap={handleAISnap}
           onClose={() => setScannerOpen(false)}
         />
       ) : null}
@@ -692,10 +700,15 @@ export default function App() {
       {addProductOpen ? (
         <AddProductModal 
           initialBarcode={prefilledBarcode}
+          prefilledPhoto={prefilledPhoto}
           apiRequestHeaders={apiHeaders}
-          onClose={() => setAddProductOpen(false)}
+          onClose={() => {
+            setAddProductOpen(false);
+            setPrefilledPhoto(null);
+          }}
           onSave={() => {
             setAddProductOpen(false);
+            setPrefilledPhoto(null);
             fetchDashboardData();
           }}
         />

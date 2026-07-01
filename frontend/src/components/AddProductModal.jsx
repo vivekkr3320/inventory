@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Plus, X, Sparkles, Loader2, Barcode, Trash2 } from 'lucide-react';
 
-export default function AddProductModal({ initialBarcode, onClose, onSave, apiRequestHeaders }) {
+export default function AddProductModal({ initialBarcode, prefilledPhoto, onClose, onSave, apiRequestHeaders }) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('General');
   const [description, setDescription] = useState('');
@@ -79,8 +79,7 @@ export default function AddProductModal({ initialBarcode, onClose, onSave, apiRe
     setVariants(prev => prev.filter((_, idx) => idx !== index));
   };
 
-  const handlePhotoCapture = async (e) => {
-    const file = e.target.files[0];
+  const uploadAndAnalyzePhoto = async (file) => {
     if (!file) return;
 
     setLoading(true);
@@ -134,6 +133,17 @@ export default function AddProductModal({ initialBarcode, onClose, onSave, apiRe
       setLoading(false);
     }
   };
+
+  const handlePhotoCapture = (e) => {
+    const file = e.target.files[0];
+    if (file) uploadAndAnalyzePhoto(file);
+  };
+
+  useEffect(() => {
+    if (prefilledPhoto) {
+      uploadAndAnalyzePhoto(prefilledPhoto);
+    }
+  }, [prefilledPhoto]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
