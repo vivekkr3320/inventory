@@ -736,9 +736,12 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
       .where('products.org_id', req.user.orgId);
 
     let lowStockCount = 0;
+    let outOfStockCount = 0;
     variants.forEach(v => {
       const qty = variantQuantities[v.id] || 0;
-      if (qty <= v.low_stock_threshold) {
+      if (qty === 0) {
+        outOfStockCount++;
+      } else if (qty <= v.low_stock_threshold) {
         lowStockCount++;
       }
     });
@@ -765,11 +768,171 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
       totalStockCount,
       totalValuation: parseFloat(totalValuation.toFixed(2)),
       lowStockCount,
+      outOfStockCount,
       recentMovements
     });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch dashboard summary: ' + error.message });
+  }
+});
+
+// ----------------------------------------------------
+// POS BATCH CHECKOUT ENDPOINT
+// ----------------------------------------------------
+app.post('/api/stock/checkout', authenticateToken, async (req, res) => {
+  const { items } = req.body;
+  if (!items || items.length === 0) {
+    return res.status(400).json({ error: 'No items provided for checkout' });
+  }
+  
+  const billId = crypto.randomBytes(4).toString('hex').toUpperCase();
+  
+  try {
+    const defaultLoc = await db('stock_locations').where({ org_id: req.user.orgId }).first();
+    if (!defaultLoc) return res.status(500).json({ error: 'Default stock location missing' });
+
+    await db.transaction(async tr => {
+      for (const item of items) {
+        const variant = await tr('product_variants')
+          .join('products', 'product_variants.product_id', 'products.id')
+          .select('product_variants.id', 'products.org_id')
+          .where({ 'product_variants.id': item.variantId, 'products.org_id': req.user.orgId })
+          .first();
+          
+        if (!variant) throw new Error(`Product variant ${item.variantId} not found`);
+        
+        const level = await tr('stock_levels')
+          .where({ variant_id: item.variantId, location_id: defaultLoc.id })
+          .first();
+          
+        if (!level) throw new Error(`Stock level not initialized for variant ${item.variantId}`);
+        
+        const newQty = level.quantity - Number(item.quantity);
+        
+        await tr('stock_levels')
+          .where({ id: level.id })
+          .update({ quantity: newQty, updated_at: tr.fn.now() });
+          
+        await tr('stock_movements').insert({
+          id: crypto.randomUUID(),
+          variant_id: item.variantId,
+          location_id: defaultLoc.id,
+          user_id: req.user.userId,
+          quantity_delta: -Number(item.quantity),
+          reason: 'sold',
+          reference_note: `POS Sale #${billId}`
+        });
+      }
+    });
+    
+    res.json({ success: true, billId });
+  } catch (error) {
+    console.error("POS Checkout failed:", error);
+    res.status(500).json({ error: 'Checkout transaction failed: ' + error.message });
+  }
+});
+
+// ----------------------------------------------------
+// RESET & SEED DEMO DATA ENDPOINT
+// ----------------------------------------------------
+app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
+  try {
+    const orgId = req.user.orgId;
+    const userId = req.user.userId;
+    
+    const defaultLoc = await db('stock_locations').where({ org_id: orgId }).first();
+    if (!defaultLoc) return res.status(500).json({ error: 'Default location missing' });
+    
+    await db.transaction(async tr => {
+      // 1. Fetch variant ids for this organization to clear movements & levels
+      const variants = await tr('product_variants')
+        .join('products', 'product_variants.product_id', 'products.id')
+        .select('product_variants.id')
+        .where('products.org_id', orgId);
+      
+      const variantIds = variants.map(v => v.id);
+
+      if (variantIds.length > 0) {
+        await tr('stock_movements').whereIn('variant_id', variantIds).del();
+        await tr('stock_levels').whereIn('variant_id', variantIds).del();
+        await tr('product_variants').whereIn('id', variantIds).del();
+      }
+
+      await tr('products').where({ org_id: orgId }).del();
+         
+      // 2. Seeding default products to match the screenshot
+      const demoProducts = [
+        { name: "A4 Paper Ream", sku: "OFF-001", barcode: "890103070001", category: "Office Supplies", cost: 180.00, price: 299.00, qty: 45 },
+        { name: "Wireless Mouse", sku: "ELC-002", barcode: "890103070002", category: "Electronics", cost: 350.00, price: 699.00, qty: 15 },
+        { name: "USB-C Cable 2m", sku: "ELC-001", barcode: "890103070003", category: "Electronics", cost: 120.00, price: 249.00, qty: 30 },
+        { name: "Ballpoint Pens x12", sku: "OFF-002", barcode: "890103070004", category: "Office Supplies", cost: 60.00, price: 120.00, qty: 50 },
+        { name: "Bubble Wrap Roll", sku: "PKG-001", barcode: "890103070005", category: "Packaging", cost: 250.00, price: 499.00, qty: 10 },
+        { name: "HDMI Cable 1.5m", sku: "ELC-003", barcode: "890103070006", category: "Electronics", cost: 150.00, price: 349.00, qty: 25 }
+      ];
+      
+      const billId = "SQMBCA6";
+      
+      for (const item of demoProducts) {
+        const pId = crypto.randomUUID();
+        const vId = crypto.randomUUID();
+        
+        await tr('products').insert({
+          id: pId,
+          org_id: orgId,
+          name: item.name,
+          category: item.category,
+          description: `High-quality ${item.name} for business operations.`
+        });
+        
+        await tr('product_variants').insert({
+          id: vId,
+          product_id: pId,
+          name: "Default",
+          sku: item.sku,
+          barcode: item.barcode,
+          price: item.price,
+          cost: item.cost,
+          low_stock_threshold: 5
+        });
+        
+        const checkoutQty = item.sku === 'PKG-001' || item.sku === 'ELC-003' || item.sku === 'ELC-002' ? 6 : 5;
+        const initialQty = item.qty + checkoutQty;
+        
+        await tr('stock_levels').insert({
+          id: crypto.randomUUID(),
+          variant_id: vId,
+          location_id: defaultLoc.id,
+          quantity: item.qty
+        });
+        
+        await tr('stock_movements').insert({
+          id: crypto.randomUUID(),
+          variant_id: vId,
+          location_id: defaultLoc.id,
+          user_id: userId,
+          quantity_delta: initialQty,
+          reason: 'received',
+          reference_note: 'Initial Stock Intake'
+        });
+        
+        await tr('stock_movements').insert({
+          id: crypto.randomUUID(),
+          variant_id: vId,
+          location_id: defaultLoc.id,
+          user_id: userId,
+          quantity_delta: -checkoutQty,
+          reason: 'sold',
+          reference_note: `POS Sale #${billId}`,
+          created_at: new Date('2026-07-01T12:00:00Z')
+        });
+      }
+    });
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Demo Seeding failed:", err);
+    res.status(500).json({ error: 'Failed to reset and seed demo database: ' + err.message });
   }
 });
 
