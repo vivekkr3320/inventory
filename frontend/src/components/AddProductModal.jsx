@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Plus, X, Sparkles, Loader2, Barcode, Trash2 } from 'lucide-react';
+import BarcodeScanner from './BarcodeScanner';
 
 export default function AddProductModal({ initialBarcode, prefilledPhoto, onClose, onSave, apiRequestHeaders }) {
   const [name, setName] = useState('');
@@ -23,6 +24,7 @@ export default function AddProductModal({ initialBarcode, prefilledPhoto, onClos
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [visionStatus, setVisionStatus] = useState('');
+  const [scannerOpen, setScannerOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   // Auto-generate SKUs when parent name changes
@@ -224,7 +226,7 @@ export default function AddProductModal({ initialBarcode, prefilledPhoto, onClos
         ) : null}
 
         {/* AI Ingest */}
-        <div style={{ marginBottom: '24px' }}>
+        <div style={{ marginBottom: '24px', display: 'flex', gap: '12px' }}>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -236,12 +238,21 @@ export default function AddProductModal({ initialBarcode, prefilledPhoto, onClos
           <button 
             type="button" 
             className="btn btn-primary" 
-            onClick={() => fileInputRef.current.click()}
+            onClick={() => setScannerOpen(true)}
             disabled={loading}
-            style={{ width: '100%', gap: '10px', height: '50px', background: 'linear-gradient(135deg, #6366f1, #a855f7)' }}
+            style={{ flexGrow: 1, gap: '10px', height: '50px', background: 'linear-gradient(135deg, #6366f1, #a855f7)' }}
           >
             {loading ? <Loader2 size={18} className="animate-spin" /> : <Camera size={18} />}
-            Scan Product Packaging / Take Photo (AI Ingest)
+            Open Ingestion Camera (Real-time AI/Barcode)
+          </button>
+          <button 
+            type="button" 
+            className="btn btn-secondary" 
+            onClick={() => fileInputRef.current.click()}
+            disabled={loading}
+            style={{ gap: '10px', height: '50px' }}
+          >
+            Upload Photo File
           </button>
         </div>
 
@@ -396,6 +407,25 @@ export default function AddProductModal({ initialBarcode, prefilledPhoto, onClos
           </div>
         </form>
       </div>
+
+      {scannerOpen ? (
+        <BarcodeScanner 
+          onScan={(barcode) => {
+            setVariants(prev => prev.map((v, idx) => {
+              if (idx === 0) {
+                return { ...v, barcode };
+              }
+              return v;
+            }));
+            setScannerOpen(false);
+          }}
+          onAISnap={(file) => {
+            uploadAndAnalyzePhoto(file);
+            setScannerOpen(false);
+          }}
+          onClose={() => setScannerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
