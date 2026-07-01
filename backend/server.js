@@ -712,6 +712,10 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
 });
 
 // Start express server
-app.listen(PORT, () => {
-  console.log(`Inventory Backend Server running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Inventory Backend Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;
