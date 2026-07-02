@@ -40,6 +40,51 @@ body {
   overflow-x: hidden;
 }
 
+/* Background Glow Blobs for Glassmorphism */
+.bg-glow-blob {
+  position: fixed;
+  width: 450px;
+  height: 450px;
+  border-radius: 50%;
+  filter: blur(120px);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.35;
+  animation: blobFloat 20s ease-in-out infinite alternate;
+}
+
+.blob-indigo {
+  background: rgba(99, 102, 241, 0.25);
+  top: -100px;
+  right: -50px;
+}
+
+.blob-purple {
+  background: rgba(168, 85, 247, 0.2);
+  bottom: -150px;
+  left: 20%;
+  animation-delay: -5s;
+}
+
+.blob-emerald {
+  background: rgba(16, 185, 129, 0.15);
+  top: 40%;
+  right: 15%;
+  animation-delay: -10s;
+}
+
+@keyframes blobFloat {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  100% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+}
+
 * {
   box-sizing: border-box;
   transition: background-color 0.2s, border-color 0.2s, transform 0.1s;

@@ -1234,6 +1234,10 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      {/* Background Glow Blobs for Glassmorphism */}
+      <div className="bg-glow-blob blob-indigo"></div>
+      <div className="bg-glow-blob blob-purple"></div>
+      <div className="bg-glow-blob blob-emerald"></div>
       {/* Sidebar navigation panel */}
       <aside className="sidebar">
         <div>
