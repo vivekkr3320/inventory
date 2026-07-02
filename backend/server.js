@@ -619,6 +619,32 @@ app.post('/api/products/from-photo', authenticateToken, upload.single('photo'), 
 // STOCK MANAGEMENT ENDPOINTS (VARIANT-BASED)
 // ----------------------------------------------------
 
+app.get('/api/stock/movements', authenticateToken, async (req, res) => {
+  try {
+    const movements = await db('stock_movements')
+      .join('product_variants', 'stock_movements.variant_id', 'product_variants.id')
+      .join('products', 'product_variants.product_id', 'products.id')
+      .join('stock_locations', 'stock_movements.location_id', 'stock_locations.id')
+      .leftJoin('users', 'stock_movements.user_id', 'users.id')
+      .select(
+        'stock_movements.*',
+        'products.name as product_name',
+        'product_variants.name as variant_name',
+        'product_variants.sku as product_sku',
+        'stock_locations.name as location_name',
+        'users.email as user_email'
+      )
+      .where('products.org_id', req.user.orgId)
+      .orderBy('stock_movements.created_at', 'desc')
+      .limit(150);
+
+    res.json(movements);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch stock movements: ' + error.message });
+  }
+});
+
 app.post('/api/stock/movements', authenticateToken, async (req, res) => {
   const { variantId, locationId, quantityDelta, reason, referenceNote } = req.body;
   

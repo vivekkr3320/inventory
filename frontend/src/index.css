@@ -449,3 +449,38 @@ label {
   padding: 12px 0;
   border-bottom: 1px solid var(--border-color);
 }
+
+/* Printable invoice media styles */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #printable-invoice-area, #printable-invoice-area * {
+    visibility: visible !important;
+  }
+  #printable-invoice-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .modal-backdrop {
+    background: transparent !important;
+    position: relative !important;
+    padding: 0 !important;
+  }
+  .print-invoice-card {
+    box-shadow: none !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+}

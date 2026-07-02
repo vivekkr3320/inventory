@@ -3,7 +3,7 @@ import {
   Package, Search, Plus, Camera, Settings, LogOut, 
   Sparkles, ShieldAlert, ArrowUpDown, History, Key, CheckCircle, RefreshCw, 
   ShoppingBag, LayoutDashboard, Minus, Trash2, ShieldX, Users, FileText, 
-  TrendingUp, Truck, Users2, X
+  TrendingUp, Truck, Users2, X, Receipt
 } from 'lucide-react';
 import BarcodeScanner from './components/BarcodeScanner';
 import AddProductModal from './components/AddProductModal';
@@ -57,6 +57,22 @@ export default function App() {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [users, setUsers] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [ledgerMovements, setLedgerMovements] = useState([]);
+  
+  // Invoice states
+  const [invoiceCart, setInvoiceCart] = useState([]);
+  const [invoiceCustomer, setInvoiceCustomer] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().substring(0, 10));
+  const [invoiceTax, setInvoiceTax] = useState(18);
+  const [invoiceDiscount, setInvoiceDiscount] = useState(0);
+  const [showInvoicePrint, setShowInvoicePrint] = useState(null);
+  
+  // Custom Invoice Form States
+  const [selectedInvVariant, setSelectedInvVariant] = useState('');
+  const [invQty, setInvQty] = useState(1);
+  const [invPrice, setInvPrice] = useState(0);
+  const [invoiceTab, setInvoiceTab] = useState('sales');
 
   const [search, setSearch] = useState('');
   const [filterLowStock, setFilterLowStock] = useState(false);
@@ -204,6 +220,18 @@ export default function App() {
     }
   };
 
+  const fetchLedgerLogs = async () => {
+    try {
+      const res = await fetch('/api/stock/movements', { headers: apiHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setLedgerMovements(data);
+      }
+    } catch (e) {
+      console.error('Fetch ledger logs error:', e);
+    }
+  };
+
   // Coordinated loaders based on current view tab
   useEffect(() => {
     fetchDashboardData();
@@ -225,6 +253,9 @@ export default function App() {
     }
     if (activeTab === 'audit') {
       fetchAuditLogs();
+    }
+    if (activeTab === 'ledger' || activeTab === 'invoices') {
+      fetchLedgerLogs();
     }
   }, [activeTab]);
 
@@ -1232,6 +1263,449 @@ export default function App() {
     </section>
   );
 
+  // 9. Stock Movements Ledger View
+  const renderLedger = () => (
+    <section className="glass-card">
+      <h3 style={{ margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <History className="text-primary" size={20} /> Stock Movement Ledger
+      </h3>
+      <p className="text-muted" style={{ fontSize: '13px', margin: '0 0 20px 0' }}>
+        Chronological audit history of all inventory transaction modifications.
+      </p>
+      
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+              <th style={{ padding: '12px 8px' }}>DATE</th>
+              <th style={{ padding: '12px 8px' }}>PRODUCT</th>
+              <th style={{ padding: '12px 8px' }}>SKU</th>
+              <th style={{ padding: '12px 8px' }}>LOCATION</th>
+              <th style={{ padding: '12px 8px' }}>CHANGE</th>
+              <th style={{ padding: '12px 8px' }}>REASON</th>
+              <th style={{ padding: '12px 8px' }}>REFERENCE NOTE</th>
+              <th style={{ padding: '12px 8px' }}>USER</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ledgerMovements.length === 0 ? (
+              <tr>
+                <td colSpan="8" style={{ textAlign: 'center', padding: '32px', color: 'var(--text-dark)' }}>
+                  No stock movements found.
+                </td>
+              </tr>
+            ) : (
+              ledgerMovements.map(m => (
+                <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {new Date(m.created_at).toLocaleString()}
+                  </td>
+                  <td style={{ padding: '12px 8px', fontWeight: 600 }}>
+                    {m.product_name} <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>({m.variant_name})</span>
+                  </td>
+                  <td style={{ padding: '12px 8px', fontFamily: 'monospace', fontSize: '12px' }}>
+                    {m.product_sku}
+                  </td>
+                  <td style={{ padding: '12px 8px' }}>{m.location_name}</td>
+                  <td style={{ padding: '12px 8px' }}>
+                    <span className={`badge ${m.quantity_delta > 0 ? 'badge-success' : 'badge-danger'}`} style={{ fontFamily: 'monospace' }}>
+                      {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px 8px', textTransform: 'capitalize' }}>
+                    <span style={{ fontSize: '12px' }}>{m.reason}</span>
+                  </td>
+                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                    {m.reference_note || '-'}
+                  </td>
+                  <td style={{ padding: '12px 8px', color: 'var(--text-dark)' }}>
+                    {m.user_email || 'System'}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+
+  // 10. Invoice Generator View
+  const renderInvoices = () => {
+    // Group movements to reconstruct POS invoices
+    const salesInvoices = [];
+    const groups = {};
+    
+    ledgerMovements.forEach(m => {
+      if (m.reason === 'sold' && m.reference_note && m.reference_note.startsWith('POS Sale #')) {
+        const key = m.reference_note;
+        if (!groups[key]) {
+          groups[key] = {
+            id: m.reference_note,
+            reference: m.reference_note,
+            date: m.created_at,
+            customerName: 'Walk-in Retail Customer',
+            user: m.user_email || 'System Store Manager',
+            items: [],
+            tax: 18,
+            discount: 0
+          };
+        }
+        
+        let unitPrice = 0;
+        for (const p of products) {
+          const v = p.variants ? p.variants.find(varItem => varItem.id === m.variant_id) : null;
+          if (v) {
+            unitPrice = v.price;
+            break;
+          }
+        }
+        
+        groups[key].items.push({
+          id: m.id,
+          name: m.product_name + ' (' + m.variant_name + ')',
+          sku: m.product_sku,
+          quantity: Math.abs(m.quantity_delta),
+          price: unitPrice || 0
+        });
+      }
+    });
+    
+    Object.values(groups).forEach(g => salesInvoices.push(g));
+
+    const handleAddInvoiceItem = () => {
+      if (!selectedInvVariant) return;
+      let foundProdName = '';
+      let foundSku = '';
+      let foundPrice = Number(invPrice);
+      
+      for (const p of products) {
+        const v = p.variants ? p.variants.find(varItem => varItem.id === selectedInvVariant) : null;
+        if (v) {
+          foundProdName = p.name + ' (' + v.name + ')';
+          foundSku = v.sku;
+          if (foundPrice === 0) foundPrice = v.price;
+          break;
+        }
+      }
+      
+      const newItem = {
+        id: Math.random().toString(),
+        variantId: selectedInvVariant,
+        name: foundProdName,
+        sku: foundSku,
+        quantity: Number(invQty),
+        price: foundPrice
+      };
+      
+      setInvoiceCart([...invoiceCart, newItem]);
+      setSelectedInvVariant('');
+      setInvQty(1);
+      setInvPrice(0);
+    };
+
+    const handleRemoveInvoiceItem = (idx) => {
+      const updated = [...invoiceCart];
+      updated.splice(idx, 1);
+      setInvoiceCart(updated);
+    };
+
+    const handleGenerateCustomInvoice = (e) => {
+      e.preventDefault();
+      if (!invoiceCustomer || invoiceCart.length === 0) {
+        alert('Please provide a Customer Name and add at least one item.');
+        return;
+      }
+      
+      const customInv = {
+        reference: invoiceNumber || 'INV-CUSTOM',
+        number: invoiceNumber,
+        date: invoiceDate || new Date().toISOString().substring(0, 10),
+        customerName: invoiceCustomer,
+        tax: Number(invoiceTax),
+        discount: Number(invoiceDiscount),
+        items: invoiceCart
+      };
+      
+      setShowInvoicePrint(customInv);
+      // Reset custom form after generation
+      setInvoiceCart([]);
+      setInvoiceCustomer('');
+      setInvoiceNumber('INV-' + Math.floor(100000 + Math.random() * 900000));
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button 
+            type="button"
+            className={`btn ${invoiceTab === 'sales' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setInvoiceTab('sales')}
+            style={{ padding: '8px 16px', fontSize: '13px' }}
+          >
+            POS Bills & Receipts
+          </button>
+          <button 
+            type="button"
+            className={`btn ${invoiceTab === 'custom' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => {
+              setInvoiceTab('custom');
+              if (!invoiceNumber) {
+                setInvoiceNumber('INV-' + Math.floor(100000 + Math.random() * 900000));
+              }
+            }}
+            style={{ padding: '8px 16px', fontSize: '13px' }}
+          >
+            Create Custom Invoice
+          </button>
+        </div>
+
+        {invoiceTab === 'sales' ? (
+          <section className="glass-card">
+            <h3 style={{ margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Receipt className="text-primary" size={20} /> POS Sales Receipts
+            </h3>
+            <p className="text-muted" style={{ fontSize: '13px', margin: '0 0 20px 0' }}>
+              Reconstruct and print formal invoices from previous POS register checkouts.
+            </p>
+            
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '12px 8px' }}>BILL ID / REF</th>
+                    <th style={{ padding: '12px 8px' }}>DATE</th>
+                    <th style={{ padding: '12px 8px' }}>CUSTOMER</th>
+                    <th style={{ padding: '12px 8px' }}>ITEMS COUNT</th>
+                    <th style={{ padding: '12px 8px' }}>TOTAL VALUE</th>
+                    <th style={{ padding: '12px 8px' }}>PROCESSOR</th>
+                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>ACTION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesInvoices.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                        No POS sales recorded. Complete a POS Checkout to print receipts.
+                      </td>
+                    </tr>
+                  ) : (
+                    salesInvoices.map(inv => {
+                      const sub = inv.items.reduce((a, c) => a + (c.quantity * c.price), 0);
+                      const taxAmt = Math.round(sub * (inv.tax / 100));
+                      const grandTotal = sub + taxAmt;
+                      return (
+                        <tr key={inv.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                          <td style={{ padding: '12px 8px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                            {inv.reference.replace('POS Sale #', '')}
+                          </td>
+                          <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                            {new Date(inv.date).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '12px 8px' }}>{inv.customerName}</td>
+                          <td style={{ padding: '12px 8px' }}>{inv.items.length} items</td>
+                          <td style={{ padding: '12px 8px', fontWeight: 'bold' }}>
+                            ₹{grandTotal.toLocaleString()}
+                          </td>
+                          <td style={{ padding: '12px 8px', color: 'var(--text-dark)' }}>{inv.user}</td>
+                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                            <button 
+                              className="btn btn-secondary" 
+                              onClick={() => setShowInvoicePrint(inv)}
+                              style={{ padding: '6px 12px', fontSize: '12px' }}
+                            >
+                              Print / View Invoice
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : (
+          <section className="glass-card" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+            <form onSubmit={handleGenerateCustomInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Plus className="text-primary" size={20} /> New Invoice Details
+              </h3>
+              
+              <div>
+                <label>Invoice Number</label>
+                <input 
+                  type="text" 
+                  value={invoiceNumber} 
+                  onChange={e => setInvoiceNumber(e.target.value)} 
+                  required 
+                />
+              </div>
+
+              <div>
+                <label>Customer Name</label>
+                <input 
+                  type="text" 
+                  value={invoiceCustomer} 
+                  onChange={e => setInvoiceCustomer(e.target.value)} 
+                  placeholder="e.g. John Doe / Alpha Corp"
+                  required 
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label>Invoice Date</label>
+                  <input 
+                    type="date" 
+                    value={invoiceDate} 
+                    onChange={e => setInvoiceDate(e.target.value)} 
+                    required 
+                  />
+                </div>
+                <div>
+                  <label>Tax Rate (GST %)</label>
+                  <input 
+                    type="number" 
+                    value={invoiceTax} 
+                    onChange={e => setInvoiceTax(e.target.value)} 
+                    min="0"
+                    max="100"
+                    required 
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label>Flat Discount (INR ₹)</label>
+                <input 
+                  type="number" 
+                  value={invoiceDiscount} 
+                  onChange={e => setInvoiceDiscount(Number(e.target.value))} 
+                  min="0"
+                />
+              </div>
+
+              <button type="submit" className="btn btn-primary" style={{ marginTop: '12px' }}>
+                Compile & Preview Invoice
+              </button>
+            </form>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ margin: '0 0 10px 0' }}>Add Invoice Line Items</h3>
+              
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label>Select Catalog Item</label>
+                  <select 
+                    value={selectedInvVariant} 
+                    onChange={e => {
+                      const vId = e.target.value;
+                      setSelectedInvVariant(vId);
+                      // Auto-fill price
+                      for (const p of products) {
+                        const v = p.variants ? p.variants.find(varItem => varItem.id === vId) : null;
+                        if (v) {
+                          setInvPrice(v.price);
+                          break;
+                        }
+                      }
+                    }}
+                  >
+                    <option value="">-- Choose Variant --</option>
+                    {products.map(p => (
+                      <optgroup key={p.id} label={p.name}>
+                        {p.variants && p.variants.map(v => (
+                          <option key={v.id} value={v.id}>
+                            {v.name} ({v.sku} - Stock: {v.stock_levels ? v.stock_levels.reduce((acc, curr) => acc + curr.quantity, 0) : 0})
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label>Quantity</label>
+                    <input 
+                      type="number" 
+                      value={invQty} 
+                      onChange={e => setInvQty(Math.max(1, Number(e.target.value)))} 
+                      min="1" 
+                    />
+                  </div>
+                  <div>
+                    <label>Unit Price (INR ₹)</label>
+                    <input 
+                      type="number" 
+                      value={invPrice} 
+                      onChange={e => setInvPrice(Number(e.target.value))} 
+                      min="0" 
+                    />
+                  </div>
+                </div>
+
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={handleAddInvoiceItem}
+                  disabled={!selectedInvVariant}
+                  style={{ alignSelf: 'flex-end', padding: '8px 16px', fontSize: '13px' }}
+                >
+                  + Add Item to Cart
+                </button>
+              </div>
+
+              <div>
+                <h4 style={{ margin: '12px 0 8px 0' }}>Current Invoice Cart ({invoiceCart.length})</h4>
+                <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '10px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '8px' }}>ITEM</th>
+                        <th style={{ padding: '8px', textAlign: 'right' }}>QTY</th>
+                        <th style={{ padding: '8px', textAlign: 'right' }}>PRICE</th>
+                        <th style={{ padding: '8px', textAlign: 'right' }}>ACTION</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoiceCart.length === 0 ? (
+                        <tr>
+                          <td colSpan="4" style={{ textAlign: 'center', padding: '16px', color: 'var(--text-dark)' }}>
+                            Cart is empty.
+                          </td>
+                        </tr>
+                      ) : (
+                        invoiceCart.map((item, idx) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.01)' }}>
+                            <td style={{ padding: '8px', fontWeight: 500 }}>{item.name}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>{item.quantity}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>₹{item.price.toLocaleString()}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              <button 
+                                type="button" 
+                                className="btn-icon" 
+                                onClick={() => handleRemoveInvoiceItem(idx)}
+                                style={{ background: 'transparent', border: 'none', padding: 0 }}
+                              >
+                                <Trash2 size={14} className="text-danger" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       {/* Background Glow Blobs for Glassmorphism */}
@@ -1258,6 +1732,10 @@ export default function App() {
             <button className={`sidebar-item ${activeTab === 'pos' ? 'active' : ''}`} onClick={() => navigate('pos')}>
               <ShoppingBag size={18} /> 
               <span className="sidebar-text">POS Billing</span>
+            </button>
+            <button className={`sidebar-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => navigate('invoices')}>
+              <Receipt size={18} /> 
+              <span className="sidebar-text">Invoices</span>
             </button>
             <button className={`sidebar-item ${activeTab === 'po' ? 'active' : ''}`} onClick={() => navigate('po')}>
               <Truck size={18} /> 
@@ -1314,7 +1792,7 @@ export default function App() {
       <main className="main-content">
         <header className="flex-between" style={{ marginBottom: '32px' }}>
           <h2 style={{ margin: 0, textTransform: 'capitalize', fontFamily: 'Outfit' }}>
-            {activeTab === 'pos' ? 'POS Billing Checkout' : activeTab === 'po' ? 'Purchase Orders' : activeTab === 'alerts' ? 'Active Stock Alerts' : activeTab === 'partners' ? 'Partners & Suppliers' : activeTab === 'audit' ? 'System Audit logs' : `${activeTab} view`}
+            {activeTab === 'pos' ? 'POS Billing Checkout' : activeTab === 'invoices' ? 'Invoice Management & Generator' : activeTab === 'po' ? 'Purchase Orders' : activeTab === 'alerts' ? 'Active Stock Alerts' : activeTab === 'partners' ? 'Partners & Suppliers' : activeTab === 'audit' ? 'System Audit logs' : `${activeTab} view`}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>admin (ADMIN)</span>
@@ -1332,6 +1810,7 @@ export default function App() {
         {activeTab === 'pos' && renderPOS()}
         {activeTab === 'po' && renderPurchaseOrders()}
         {activeTab === 'ledger' && renderLedger()}
+        {activeTab === 'invoices' && renderInvoices()}
         {activeTab === 'alerts' && renderCatalog(true)}
         {activeTab === 'analytics' && renderAnalytics()}
         {activeTab === 'partners' && renderPartners()}
@@ -1683,6 +2162,96 @@ export default function App() {
           </div>
         </div>
       ) : null}
+
+      {showInvoicePrint && (
+        <div className="modal-backdrop" onClick={() => setShowInvoicePrint(null)}>
+          <div className="glass-card print-invoice-card" onClick={e => e.stopPropagation()} style={{ background: '#fff', color: '#000', maxWidth: '800px', width: '100%', padding: '40px', borderRadius: '12px', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: 'none' }}>
+            
+            {/* Printable Area */}
+            <div id="printable-invoice-area" style={{ fontFamily: 'Arial, sans-serif' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #eaeaea', paddingBottom: '20px', marginBottom: '20px' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontWeight: 'bold', color: '#111' }}>INVOICE</h2>
+                  <span style={{ color: '#777', fontSize: '14px' }}>{showInvoicePrint.reference || 'Custom Invoice'}</span>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <h3 style={{ margin: 0, color: 'var(--primary)', fontWeight: 'bold' }}>Stockwise HQ</h3>
+                  <span style={{ color: '#777', fontSize: '13px' }}>Primary Warehouse Hub</span>
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '30px' }}>
+                <div>
+                  <strong style={{ color: '#555' }}>Billed To:</strong>
+                  <div style={{ fontSize: '15px', marginTop: '6px', fontWeight: 'bold' }}>{showInvoicePrint.customerName || 'Walk-in Retail Customer'}</div>
+                  <div style={{ color: '#777', fontSize: '13px', marginTop: '4px' }}>Date: {new Date(showInvoicePrint.date).toLocaleDateString()}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <strong style={{ color: '#555' }}>Invoice Details:</strong>
+                  <div style={{ fontSize: '13px', color: '#777', marginTop: '6px' }}>Invoice No: {showInvoicePrint.reference ? showInvoicePrint.reference.replace('POS Sale #', '') : showInvoicePrint.number}</div>
+                  <div style={{ fontSize: '13px', color: '#777', marginTop: '4px' }}>Status: PAID</div>
+                </div>
+              </div>
+              
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '30px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #eaeaea', textAlign: 'left' }}>
+                    <th style={{ padding: '10px 0', color: '#555' }}>Item Details</th>
+                    <th style={{ padding: '10px 0', color: '#555' }}>SKU</th>
+                    <th style={{ padding: '10px 0', textAlign: 'right', color: '#555' }}>Qty</th>
+                    <th style={{ padding: '10px 0', textAlign: 'right', color: '#555' }}>Unit Price</th>
+                    <th style={{ padding: '10px 0', textAlign: 'right', color: '#555' }}>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {showInvoicePrint.items.map((item, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid #f2f2f2' }}>
+                      <td style={{ padding: '12px 0', fontWeight: '500' }}>{item.name}</td>
+                      <td style={{ padding: '12px 0', fontFamily: 'monospace', color: '#666' }}>{item.sku}</td>
+                      <td style={{ padding: '12px 0', textAlign: 'right' }}>{item.quantity}</td>
+                      <td style={{ padding: '12px 0', textAlign: 'right' }}>₹{item.price.toLocaleString()}</td>
+                      <td style={{ padding: '12px 0', textAlign: 'right', fontWeight: '600' }}>₹{(item.quantity * item.price).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ width: '250px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '14px', color: '#666' }}>
+                    <span>Subtotal:</span>
+                    <span>₹{showInvoicePrint.items.reduce((acc, curr) => acc + (curr.quantity * curr.price), 0).toLocaleString()}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '14px', color: '#666' }}>
+                    <span>Tax ({showInvoicePrint.tax}%):</span>
+                    <span>₹{Math.round(showInvoicePrint.items.reduce((acc, curr) => acc + (curr.quantity * curr.price), 0) * (showInvoicePrint.tax / 100)).toLocaleString()}</span>
+                  </div>
+                  {showInvoicePrint.discount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '14px', color: '#e53e3e' }}>
+                      <span>Discount:</span>
+                      <span>-₹{showInvoicePrint.discount.toLocaleString()}</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderTop: '2px solid #eaeaea', marginTop: '6px', fontSize: '16px', fontWeight: 'bold', color: '#111' }}>
+                    <span>Total Amount:</span>
+                    <span>₹{Math.round(showInvoicePrint.items.reduce((acc, curr) => acc + (curr.quantity * curr.price), 0) * (1 + showInvoicePrint.tax / 100) - (showInvoicePrint.discount || 0)).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div style={{ borderTop: '1px solid #eaeaea', marginTop: '40px', paddingTop: '20px', textAlign: 'center', color: '#888', fontSize: '12px' }}>
+                Thank you for shopping at Stockwise HQ! For any queries, contact support@stockwise.local.
+              </div>
+            </div>
+            
+            {/* Buttons */}
+            <div className="no-print" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setShowInvoicePrint(null)}>Close Preview</button>
+              <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print Invoice</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </>
   );
