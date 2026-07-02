@@ -867,10 +867,14 @@ app.post('/api/db/reset-demo', authenticateToken, async (req, res) => {
 
       // Truncate tables for this organization
       await tr('system_audit_logs').where({ org_id: orgId }).del();
-      await tr('purchase_order_items')
+       const poItemsToDelete = await tr('purchase_order_items')
         .join('purchase_orders', 'purchase_order_items.purchase_order_id', 'purchase_orders.id')
         .where('purchase_orders.org_id', orgId)
-        .del();
+        .select('purchase_order_items.id');
+      const poItemIds = poItemsToDelete.map(item => item.id);
+      if (poItemIds.length > 0) {
+        await tr('purchase_order_items').whereIn('id', poItemIds).del();
+      }
       await tr('purchase_orders').where({ org_id: orgId }).del();
       await tr('suppliers').where({ org_id: orgId }).del();
 
