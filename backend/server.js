@@ -594,6 +594,15 @@ app.post('/api/products/from-photo', authenticateToken, upload.single('photo'), 
     if (settings.vision_api_key_encrypted) {
       apiKey = decrypt(settings.vision_api_key_encrypted);
       useSandbox = false;
+    } else {
+      const provider = settings.vision_provider || 'gemini';
+      if (provider === 'gemini' && process.env.GEMINI_API_KEY) {
+        apiKey = process.env.GEMINI_API_KEY;
+        useSandbox = false;
+      } else if (provider === 'openai' && process.env.OPENAI_API_KEY) {
+        apiKey = process.env.OPENAI_API_KEY;
+        useSandbox = false;
+      }
     }
 
     const extracted = await extractProductFromImage({
