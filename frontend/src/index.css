@@ -539,7 +539,7 @@ label {
   border-left: 4px solid var(--primary) !important;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .sidebar {
     display: none !important;
   }
@@ -811,7 +811,9 @@ label {
 }
 
 .variant-matrix-table-view {
-  display: block;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   width: 100%;
 }
 
@@ -850,7 +852,7 @@ label {
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .modal-backdrop {
     padding: 0 !important;
     background: rgba(9, 9, 11, 0.96) !important; /* opaque solid background */
@@ -1066,7 +1068,7 @@ label {
   padding-bottom: 16px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .app-header {
     background: #09090b;
     margin: -20px -16px 24px -16px !important;

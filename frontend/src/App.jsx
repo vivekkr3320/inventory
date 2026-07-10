@@ -1367,7 +1367,7 @@ export default function App() {
         {/* Filters Panel */}
         <div style={{ marginBottom: '20px' }}>
           {/* Desktop Filter Pills (>= 640px) */}
-          <div className="variant-matrix-table-view" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="variant-matrix-table-view" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               {['ALL', 'DRAFT', 'PENDING', 'RECEIVED'].map(status => (
                 <button
@@ -1402,7 +1402,7 @@ export default function App() {
           </div>
 
           {/* Mobile Filter Button (< 640px) */}
-          <div className="variant-matrix-card-view" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div className="variant-matrix-card-view" style={{ gap: '8px' }}>
             <button 
               className="btn btn-secondary" 
               onClick={() => setPoMobileFilterOpen(true)}
