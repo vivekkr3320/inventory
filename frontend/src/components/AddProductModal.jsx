@@ -202,7 +202,7 @@ export default function AddProductModal({ initialBarcode, prefilledPhoto, onClos
   };
 
   return (
-    <div className="modal-backdrop" style={{ background: 'rgba(9, 9, 11, 0.9)', backdropFilter: 'blur(16px)', zIndex: 1005 }}>
+    <div className="modal-backdrop" style={{ zIndex: 1005 }}>
       <div className="responsive-modal-container">
         <div className="responsive-modal-header">
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px', fontWeight: 'bold' }}>

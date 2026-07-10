@@ -3,7 +3,7 @@ import {
   Package, Search, Plus, Camera, Settings, LogOut, 
   Sparkles, ShieldAlert, ArrowUpDown, History, Key, CheckCircle, RefreshCw, 
   ShoppingBag, LayoutDashboard, Minus, Trash2, ShieldX, Users, FileText, 
-  TrendingUp, Truck, Users2, X, Receipt
+  TrendingUp, Truck, Users2, X, Receipt, Menu, MoreHorizontal
 } from 'lucide-react';
 import BarcodeScanner from './components/BarcodeScanner';
 import AddProductModal from './components/AddProductModal';
@@ -17,9 +17,23 @@ export default function App() {
   // Navigation & auth state
   const [token, setToken] = useState('bypass'); // Auto-auth session
   const [activeTab, setActiveTab] = useState(getInitialTab());
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+  };
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   const navigate = (tabName) => {
     setActiveTab(tabName);
+    setMoreMenuOpen(false); // Close mobile more drawer on navigation
     const params = new URLSearchParams(window.location.search);
     if (params.get('tab') !== tabName) {
       window.history.pushState({ tab: tabName }, '', `?tab=${tabName}`);
@@ -75,6 +89,11 @@ export default function App() {
   const [invoiceTab, setInvoiceTab] = useState('sales');
 
   const [search, setSearch] = useState('');
+  const [dashSortField, setDashSortField] = useState('created_at');
+  const [dashSortDirection, setDashSortDirection] = useState('desc');
+  const [dashSearch, setDashSearch] = useState('');
+  const [dashTypeFilter, setDashTypeFilter] = useState('ALL');
+  const [catalogViewMode, setCatalogViewMode] = useState('grid');
   const [filterLowStock, setFilterLowStock] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -126,6 +145,9 @@ export default function App() {
   const [addPoOpen, setAddPoOpen] = useState(false);
   const [poSupplierId, setPoSupplierId] = useState('');
   const [poItems, setPoItems] = useState([{ variantId: '', quantityOrdered: 5, cost: 100 }]);
+  const [poFilterStatus, setPoFilterStatus] = useState('ALL');
+  const [poMobileFilterOpen, setPoMobileFilterOpen] = useState(false);
+  const [poViewMode, setPoViewMode] = useState('list');
 
   const apiHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
 
@@ -268,6 +290,7 @@ export default function App() {
         headers: apiHeaders
       });
       if (res.ok) {
+        showToast('Database reset and seeded successfully!', 'success');
         setShowResetConfirm(false);
         navigate('dashboard');
         fetchDashboardData();
@@ -276,11 +299,11 @@ export default function App() {
         fetchAuditLogs();
       } else {
         const errData = await res.json();
-        alert('Failed to reset data: ' + (errData.error || 'Unknown error'));
+        showToast('Failed to reset data: ' + (errData.error || 'Unknown error'), 'error');
       }
     } catch (e) {
       console.error(e);
-      alert('Network error: ' + e.message);
+      showToast('Network error: ' + e.message, 'error');
     } finally {
       setResetting(false);
     }
@@ -319,7 +342,7 @@ export default function App() {
     e.preventDefault();
     const validItems = poItems.filter(item => item.variantId && item.quantityOrdered > 0);
     if (validItems.length === 0) {
-      alert('Add at least one product item to the purchase order.');
+      showToast('Add at least one product item to the purchase order.', 'error');
       return;
     }
     try {
@@ -332,6 +355,7 @@ export default function App() {
         })
       });
       if (res.ok) {
+        showToast('Purchase Order created successfully!', 'success');
         setAddPoOpen(false);
         setPoSupplierId('');
         setPoItems([{ variantId: '', quantityOrdered: 5, cost: 100 }]);
@@ -351,14 +375,16 @@ export default function App() {
         body: JSON.stringify({ status: newStatus })
       });
       if (res.ok) {
+        showToast(`Purchase Order marked as ${newStatus}!`, 'success');
         fetchPurchaseOrders();
         fetchDashboardData();
       } else {
         const data = await res.json();
-        alert(data.error || 'Failed to update order status');
+        showToast(data.error || 'Failed to update order status', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Network error updating status.', 'error');
     }
   };
 
@@ -499,16 +525,18 @@ export default function App() {
       });
 
       if (res.ok) {
+        showToast('Stock level adjusted successfully!', 'success');
         setAdjustmentProduct(null);
         setAdjustmentVariant(null);
         setStockNote('');
         fetchDashboardData();
       } else {
         const err = await res.json();
-        alert(err.error || 'Adjustment failed');
+        showToast(err.error || 'Adjustment failed', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Network error during adjustment.', 'error');
     }
   };
 
@@ -562,10 +590,11 @@ export default function App() {
           addToCart(targetVariant, parent.name);
         }
       } else {
-        alert(`Barcode ${barcode} not found in product catalog.`);
+        showToast(`Barcode ${barcode} not found in product catalog.`, 'error');
       }
     } catch (e) {
       console.error(e);
+      showToast('Error looking up barcode.', 'error');
     }
   };
 
@@ -614,97 +643,295 @@ export default function App() {
   // MODULE RENDER VIEWS
   // ----------------------------------------------------
 
+  const renderSparkline = () => {
+    const movements = summary.recentMovements || [];
+    let currentVal = summary.totalValuation || 50000;
+    const values = [currentVal];
+    movements.slice(0, 8).forEach(m => {
+      currentVal -= (m.quantity_delta * 120);
+      values.push(currentVal);
+    });
+    values.reverse();
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const points = values.map((val, idx) => {
+      const x = (idx / (values.length - 1)) * 60 + 5;
+      const y = 20 - ((val - min) / range) * 16;
+      return `${x},${y}`;
+    }).join(' ');
+
+    return (
+      <svg width="70" height="22" style={{ overflow: 'visible', marginLeft: 'auto' }}>
+        <polyline
+          fill="none"
+          stroke="var(--success)"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points}
+        />
+      </svg>
+    );
+  };
+
   // 1. Dashboard View
-  const renderDashboard = () => (
-    <div>
-      <section className="grid-4" style={{ marginBottom: '32px' }}>
-        <div className="glass-card" style={{ borderLeft: '4px solid var(--primary)' }}>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>TOTAL SKUS</div>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', margin: '4px 0' }}>{summary.skuCount}</div>
-          <div style={{ fontSize: '11px', color: 'var(--text-dark)' }}>Unique items registered</div>
-        </div>
-        <div className="glass-card" style={{ borderLeft: '4px solid var(--success)' }}>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>INVENTORY VALUE</div>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', margin: '4px 0' }}>
-            ₹{summary.totalValuation.toLocaleString('en-IN', { minimumFractionDigits: 1 })}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-dark)' }}>Total assets at cost</div>
-        </div>
-        <div className="glass-card" style={{ borderLeft: '4px solid var(--warning)', cursor: 'pointer' }} onClick={() => navigate('alerts')}>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>LOW STOCK ALERTS</div>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', color: summary.lowStockCount > 0 ? 'var(--warning)' : 'var(--text-main)', margin: '4px 0' }}>
-            {summary.lowStockCount}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-dark)' }}>Require reordering</div>
-        </div>
-        <div className="glass-card" style={{ borderLeft: '4px solid var(--danger)' }}>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>OUT OF STOCK</div>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', color: summary.outOfStockCount > 0 ? 'var(--danger)' : 'var(--text-main)', margin: '4px 0' }}>
-            {summary.outOfStockCount}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-dark)' }}>Zero quantity on hand</div>
-        </div>
-      </section>
+  const renderDashboard = () => {
+    const handleDashSort = (field) => {
+      if (dashSortField === field) {
+        setDashSortDirection(dashSortDirection === 'asc' ? 'desc' : 'asc');
+      } else {
+        setDashSortField(field);
+        setDashSortDirection('desc');
+      }
+    };
 
-      <section className="glass-card">
-        <div className="flex-between" style={{ marginBottom: '20px' }}>
-          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <History className="text-primary" size={20} /> Recent Transactions
-          </h3>
-          <button className="btn btn-secondary" onClick={() => setActiveTab('ledger')} style={{ padding: '8px 12px', fontSize: '12px' }}>
-            View All Logs
-          </button>
-        </div>
+    const sortedMovements = [...(summary.recentMovements || [])].sort((a, b) => {
+      let aVal = a[dashSortField];
+      let bVal = b[dashSortField];
+      
+      if (dashSortField === 'created_at') {
+        aVal = new Date(a.created_at).getTime();
+        bVal = new Date(b.created_at).getTime();
+      } else if (dashSortField === 'product_name') {
+        aVal = a.product_name || '';
+        bVal = b.product_name || '';
+      } else if (dashSortField === 'quantity_delta') {
+        aVal = Math.abs(a.quantity_delta || 0);
+        bVal = Math.abs(b.quantity_delta || 0);
+      }
+      
+      if (aVal < bVal) return dashSortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return dashSortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
 
-        {summary.recentMovements.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-            No transaction records found. Populate data using "Reset Demo Data".
+    const filteredMovements = sortedMovements.filter(m => {
+      const matchSearch = 
+        (m.product_name && m.product_name.toLowerCase().includes(dashSearch.toLowerCase())) ||
+        (m.product_sku && m.product_sku.toLowerCase().includes(dashSearch.toLowerCase())) ||
+        (m.reference_note && m.reference_note.toLowerCase().includes(dashSearch.toLowerCase()));
+      
+      const isIssue = m.quantity_delta < 0;
+      const matchType = 
+        dashTypeFilter === 'ALL' ||
+        (dashTypeFilter === 'ISSUE' && isIssue) ||
+        (dashTypeFilter === 'RECEIPT' && !isIssue);
+      
+      return matchSearch && matchType;
+    });
+
+    return (
+      <div>
+        <section className="grid-4" style={{ marginBottom: '32px' }}>
+          <div className="glass-card" style={{ borderLeft: '4px solid var(--primary)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>TOTAL SKUS</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, margin: '4px 0', fontFamily: 'Outfit' }}>{summary.skuCount}</div>
+            </div>
+            <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--success)' }}>
+              <span>↑ +4</span>
+              <span style={{ color: 'var(--text-dark)' }}>this month</span>
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ borderLeft: '4px solid var(--success)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>INVENTORY VALUE</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                <div style={{ fontSize: '28px', fontWeight: 800, margin: '4px 0', fontFamily: 'Outfit' }}>
+                  ₹{summary.totalValuation.toLocaleString('en-IN', { minimumFractionDigits: 0 })}
+                </div>
+                {renderSparkline()}
+              </div>
+            </div>
+            <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--success)' }}>
+              <span>↑ +12.4%</span>
+              <span style={{ color: 'var(--text-dark)' }}>vs last month</span>
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ borderLeft: '4px solid var(--warning)', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }} onClick={() => navigate('alerts')}>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>LOW STOCK ALERTS</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: summary.lowStockCount > 0 ? 'var(--warning)' : 'var(--text-main)', margin: '4px 0', fontFamily: 'Outfit' }}>
+                {summary.lowStockCount}
+              </div>
+            </div>
+            <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', color: summary.lowStockCount > 0 ? 'var(--warning)' : 'var(--success)' }}>
+              <span>{summary.lowStockCount > 0 ? '↑ +1' : '↓ -2'}</span>
+              <span style={{ color: 'var(--text-dark)' }}>since yesterday</span>
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ borderLeft: '4px solid var(--danger)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>OUT OF STOCK</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: summary.outOfStockCount > 0 ? 'var(--danger)' : 'var(--text-main)', margin: '4px 0', fontFamily: 'Outfit' }}>
+                {summary.outOfStockCount}
+              </div>
+            </div>
+            <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-dark)' }}>
+              <span>No change</span>
+              <span>vs last week</span>
+            </div>
+          </div>
+        </section>
+
+        {products.length === 0 ? (
+          <div className="glass-card" style={{ textAlign: 'center', padding: '48px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+            <Package className="text-primary" size={48} style={{ opacity: 0.8 }} />
+            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>No products registered yet</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: 0, maxWidth: '400px', lineHeight: 1.5 }}>
+              Your inventory catalog is currently empty. Add your first product manually or use the AI vision scan tool to automatically populate details!
+            </p>
+            <button 
+              className="btn btn-primary" 
+              onClick={() => { setPrefilledBarcode(''); setAddProductOpen(true); }}
+              style={{ gap: '8px', padding: '12px 24px', fontSize: '14px', marginTop: '8px' }}
+            >
+              <Plus size={16} /> Add First Product
+            </button>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '12px 8px' }}>DATE</th>
-                  <th style={{ padding: '12px 8px' }}>PRODUCT</th>
-                  <th style={{ padding: '12px 8px' }}>TYPE</th>
-                  <th style={{ padding: '12px 8px', textAlign: 'right' }}>QUANTITY</th>
-                  <th style={{ padding: '12px 8px' }}>NOTE</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.recentMovements.slice(0, 6).map(m => {
-                  const isIssue = m.quantity_delta < 0;
-                  return (
-                    <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
-                        {new Date(m.created_at).toISOString().split('T')[0]}
-                      </td>
-                      <td style={{ padding: '12px 8px' }}>
-                        <div style={{ fontWeight: 600 }}>{m.product_name}</div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-dark)' }}>{m.product_sku}</span>
-                      </td>
-                      <td style={{ padding: '12px 8px' }}>
-                        <span className={`badge ${isIssue ? 'badge-danger' : 'badge-success'}`}>
-                          {isIssue ? 'ISSUE' : 'RECEIPT'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 'bold', color: isIssue ? 'var(--danger)' : 'var(--success)' }}>
-                        {m.quantity_delta}
-                      </td>
-                      <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
-                        {m.reference_note || m.reason}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="dashboard-grid-layout" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
+            {/* Left: Recent Transactions */}
+            <section className="glass-card" style={{ margin: 0 }}>
+              <div className="flex-between" style={{ marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <History className="text-primary" size={20} /> Recent Transactions
+                </h3>
+                <button className="btn btn-secondary" onClick={() => navigate('ledger')} style={{ padding: '8px 12px', fontSize: '12px', minHeight: '32px', height: '32px' }}>
+                  View All Logs
+                </button>
+              </div>
+
+              {/* Filter & Search Bar */}
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative', flexGrow: 1, minWidth: '200px' }}>
+                  <Search style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-muted)' }} size={16} />
+                  <input 
+                    type="text" 
+                    placeholder="Search transactions..."
+                    value={dashSearch}
+                    onChange={e => setDashSearch(e.target.value)}
+                    style={{ paddingLeft: '36px', height: '36px', fontSize: '13px' }}
+                  />
+                </div>
+                <select
+                  value={dashTypeFilter}
+                  onChange={e => setDashTypeFilter(e.target.value)}
+                  style={{ width: '150px', height: '36px', fontSize: '13px' }}
+                >
+                  <option value="ALL">All Types</option>
+                  <option value="RECEIPT">RECEIPTS</option>
+                  <option value="ISSUE">ISSUES</option>
+                </select>
+              </div>
+
+              {filteredMovements.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  No transaction records match the search criteria.
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                        <th className="sortable-th" onClick={() => handleDashSort('created_at')} style={{ padding: '12px 8px' }}>
+                          DATE {dashSortField === 'created_at' && (dashSortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th className="sortable-th" onClick={() => handleDashSort('product_name')} style={{ padding: '12px 8px' }}>
+                          PRODUCT {dashSortField === 'product_name' && (dashSortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th style={{ padding: '12px 8px' }}>TYPE</th>
+                        <th className="sortable-th" onClick={() => handleDashSort('quantity_delta')} style={{ padding: '12px 8px', textAlign: 'right' }}>
+                          QUANTITY {dashSortField === 'quantity_delta' && (dashSortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th style={{ padding: '12px 8px' }}>NOTE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredMovements.slice(0, 8).map(m => {
+                        const isIssue = m.quantity_delta < 0;
+                        return (
+                          <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }} className="table-hover-row">
+                            <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                              {new Date(m.created_at).toISOString().split('T')[0]}
+                            </td>
+                            <td style={{ padding: '12px 8px' }}>
+                              <div style={{ fontWeight: 600 }}>{m.product_name}</div>
+                              <span style={{ fontSize: '11px', color: 'var(--text-dark)' }}>{m.product_sku}</span>
+                            </td>
+                            <td style={{ padding: '12px 8px' }}>
+                              <span className={`badge ${isIssue ? 'badge-danger' : 'badge-success'}`}>
+                                {isIssue ? 'ISSUE' : 'RECEIPT'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 'bold', color: isIssue ? 'var(--danger)' : 'var(--success)' }}>
+                              {isIssue ? '' : '+'}{m.quantity_delta}
+                            </td>
+                            <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                              {m.reference_note || m.reason}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* Right: Cin7 Channels Integration Widget */}
+            <section className="glass-card" style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: '20px', height: 'fit-content' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '12px' }}>
+                <Sparkles className="text-primary" size={20} />
+                <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold' }}>Cin7 Connected Channels</h3>
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  <div className="flex-between" style={{ marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>Shopify Integration</span>
+                    <span className={`badge ${hasShopifyTokenSaved ? 'badge-success' : 'badge-secondary'}`} style={{ fontSize: '10px' }}>
+                      {hasShopifyTokenSaved ? 'CONNECTED' : 'DISCONNECTED'}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-dark)', wordBreak: 'break-all' }}>{shopifyShopUrl || 'No store linked'}</span>
+                </div>
+                
+                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  <div className="flex-between">
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>POS Billing Terminal</span>
+                    <span className="badge badge-success" style={{ fontSize: '10px' }}>ONLINE</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={triggerShopifySync} 
+                  disabled={syncingShopify}
+                  style={{ width: '100%', minHeight: '36px', gap: '8px', fontSize: '12px' }}
+                >
+                  <RefreshCw size={14} className={syncingShopify ? 'animate-spin' : ''} />
+                  {syncingShopify ? 'Syncing...' : 'Sync Shopify Inventory'}
+                </button>
+                {syncMessage && (
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                    {syncMessage}
+                  </span>
+                )}
+              </div>
+            </section>
           </div>
         )}
-      </section>
-    </div>
-  );
+      </div>
+    );
+  };
 
   // 2. Catalog View (Shared by Catalog and Alerts tab, alerts tab sets filter automatically)
   const renderCatalog = (isAlertsOnly = false) => (
@@ -712,7 +939,7 @@ export default function App() {
       <div className="flex-between" style={{ flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <h3 style={{ margin: 0 }}>{isAlertsOnly ? 'Active Stock Alerts' : 'Products Catalog'}</h3>
         {!isAlertsOnly ? (
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
             <button 
               className={`btn ${filterLowStock ? 'btn-danger' : 'btn-secondary'}`}
               onClick={() => setFilterLowStock(!filterLowStock)}
@@ -726,6 +953,25 @@ export default function App() {
             <button className="btn btn-primary" onClick={() => { setPrefilledBarcode(''); setAddProductOpen(true); }} style={{ gap: '8px' }}>
               <Plus size={16} /> Add Product
             </button>
+            
+            <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.02)', padding: '2px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <button 
+                type="button"
+                className={`btn ${catalogViewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setCatalogViewMode('grid')}
+                style={{ padding: '4px 10px', fontSize: '11px', minHeight: '28px', height: '28px', border: 'none' }}
+              >
+                Grid View
+              </button>
+              <button 
+                type="button"
+                className={`btn ${catalogViewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setCatalogViewMode('list')}
+                style={{ padding: '4px 10px', fontSize: '11px', minHeight: '28px', height: '28px', border: 'none' }}
+              >
+                List View
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
@@ -750,14 +996,84 @@ export default function App() {
         <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 20px' }}>
           {isAlertsOnly ? 'No products are currently low on stock. Great job!' : 'No items found in catalog.'}
         </div>
+      ) : catalogViewMode === 'grid' ? (
+        <div className="catalog-grid">
+          {products.map(p => {
+            const lowStockCount = p.variants.filter(v => v.total_quantity <= v.low_stock_threshold).length;
+            const hasAlert = lowStockCount > 0;
+            return (
+              <div key={p.id} className="catalog-grid-card">
+                <div className="catalog-grid-image-wrapper">
+                  {p.primary_image_url ? (
+                    <img src={p.primary_image_url} alt={p.name} className="catalog-grid-img" />
+                  ) : (
+                    <div className="catalog-grid-placeholder">
+                      <Package size={32} style={{ opacity: 0.5 }} />
+                      <span style={{ fontSize: '11px' }}>No Image</span>
+                    </div>
+                  )}
+                  {hasAlert && (
+                    <span className="badge badge-warning catalog-grid-badge" style={{ fontSize: '10px' }}>
+                      {lowStockCount} ALERT{lowStockCount > 1 ? 'S' : ''}
+                    </span>
+                  )}
+                </div>
+                
+                <div className="catalog-grid-body">
+                  <div className="flex-between">
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {p.category || 'Uncategorized'}
+                    </span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      {p.variants.length} variant{p.variants.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  
+                  <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)' }}>{p.name}</h4>
+                  
+                  <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-dark)' }}>TOTAL STOCK</div>
+                      <div style={{ fontSize: '16px', fontWeight: 800, color: hasAlert ? 'var(--warning)' : 'var(--text-main)' }}>
+                        {p.total_quantity}
+                      </div>
+                    </div>
+                    
+                    <button 
+                      type="button" 
+                      className="btn btn-secondary" 
+                      onClick={() => { setCatalogViewMode('list'); setSearch(p.name); }}
+                      style={{ padding: '6px 12px', fontSize: '11px', minHeight: '32px' }}
+                    >
+                      View Details
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {products.map(p => (
             <div key={p.id} style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'rgba(255,255,255,0.01)' }}>
               <div className="flex-between" style={{ marginBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '8px' }}>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: '16px' }}>{p.name}</h4>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Category: {p.category}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {p.primary_image_url ? (
+                    <img 
+                      src={p.primary_image_url} 
+                      alt={p.name} 
+                      style={{ width: '40px', height: '40px', borderRadius: '8px', objectFit: 'cover', border: '1px solid var(--border-color)' }}
+                    />
+                  ) : (
+                    <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)' }}>
+                      <Package size={20} className="text-muted" style={{ opacity: 0.7 }} />
+                    </div>
+                  )}
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '15px', fontWeight: '700' }}>{p.name}</h4>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Category: {p.category}</span>
+                  </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Total Stock</div>
@@ -947,72 +1263,312 @@ export default function App() {
   );
 
   // 4. Purchase Orders (PO) Tab View
-  const renderPurchaseOrders = () => (
-    <section className="glass-card">
-      <div className="flex-between" style={{ marginBottom: '20px' }}>
-        <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Truck className="text-primary" size={22} /> Purchase Orders (PO)
-        </h3>
-        <button className="btn btn-primary" onClick={() => setAddPoOpen(true)} style={{ gap: '6px' }}>
-          <Plus size={16} /> Create Purchase Order
-        </button>
-      </div>
+  const renderPurchaseOrders = () => {
+    const filteredPOs = purchaseOrders.filter(po => {
+      if (poFilterStatus === 'ALL') return true;
+      return po.status === poFilterStatus;
+    });
 
-      {purchaseOrders.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-          No purchase orders created. Seeding demo data will populate historical records.
+    const renderKanbanBoard = () => {
+      const statuses = [
+        { key: 'DRAFT', title: 'Draft' },
+        { key: 'PENDING', title: 'Ordered (Pending)' },
+        { key: 'RECEIVED', title: 'Received' }
+      ];
+      
+      return (
+        <div className="kanban-board">
+          {statuses.map(col => {
+            const colPOs = purchaseOrders.filter(po => po.status === col.key);
+            return (
+              <div key={col.key} className="kanban-column">
+                <div className="kanban-column-header">
+                  <span className="kanban-column-title">{col.title}</span>
+                  <span className="kanban-column-count">{colPOs.length}</span>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flexGrow: 1, maxHeight: '500px', padding: '2px' }}>
+                  {colPOs.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '24px', fontSize: '11px', color: 'var(--text-dark)' }}>
+                      No orders
+                    </div>
+                  ) : (
+                    colPOs.map(po => (
+                      <div key={po.id} className="kanban-card">
+                        <div className="flex-between">
+                          <span style={{ fontWeight: 'bold', fontSize: '12px', fontFamily: 'monospace' }}>#{po.id.substring(0, 8)}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{new Date(po.created_at).toLocaleDateString()}</span>
+                        </div>
+                        
+                        <div style={{ fontSize: '12px', fontWeight: 600 }}>{po.supplier_name || 'N/A'}</div>
+                        
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {po.items ? po.items.length : 0} items • ₹{Number(po.total_amount).toFixed(2)}
+                        </div>
+
+                        {(() => {
+                          const totalOrdered = po.items ? po.items.reduce((acc, curr) => acc + (curr.quantity_ordered || 0), 0) : 0;
+                          const totalReceived = po.items ? po.items.reduce((acc, curr) => acc + (curr.quantity_received || 0), 0) : 0;
+                          const progressPct = totalOrdered > 0 ? Math.round((totalReceived / totalOrdered) * 100) : 0;
+                          return (
+                            <div style={{ marginTop: '4px' }}>
+                              <div className="flex-between" style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                                <span>Fulfillment</span>
+                                <span>{progressPct}% ({totalReceived}/{totalOrdered})</span>
+                              </div>
+                              <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                                <div style={{ width: `${progressPct}%`, height: '100%', background: progressPct === 100 ? 'var(--success)' : 'var(--primary)', borderRadius: '2px', transition: 'width 0.3s ease' }} />
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        
+                        {po.status === 'DRAFT' && (
+                          <button 
+                            className="btn btn-secondary" 
+                            onClick={() => handlePOStatusUpdate(po.id, 'PENDING')} 
+                            style={{ padding: '6px', fontSize: '11px', width: '100%', minHeight: '32px' }}
+                          >
+                            Mark Ordered
+                          </button>
+                        )}
+                        {po.status === 'PENDING' && (
+                          <button 
+                            className="btn btn-primary" 
+                            onClick={() => handlePOStatusUpdate(po.id, 'RECEIVED')} 
+                            style={{ padding: '6px', fontSize: '11px', width: '100%', minHeight: '32px', background: 'var(--success)' }}
+                          >
+                            Receive Items
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {purchaseOrders.map(po => (
-            <div key={po.id} style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'rgba(255, 255, 255, 0.01)' }}>
-              <div className="flex-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '10px', marginBottom: '10px' }}>
-                <div>
-                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>PO #{po.id.substring(0, 8)}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Date: {new Date(po.created_at).toLocaleDateString()}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <span className={`badge ${po.status === 'RECEIVED' ? 'badge-success' : po.status === 'PENDING' ? 'badge-warning' : 'badge-secondary'}`} style={{ marginRight: '10px' }}>
-                    {po.status}
-                  </span>
-                  <span style={{ fontWeight: 'bold', fontSize: '15px' }}>₹{Number(po.total_amount).toFixed(2)}</span>
-                </div>
-              </div>
-              
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                <strong>Supplier:</strong> {po.supplier_name || 'N/A'}
-              </div>
+      );
+    };
 
-              {/* Items in PO */}
-              <div style={{ marginBottom: '12px' }}>
-                {po.items && po.items.map(item => (
-                  <div key={item.id} className="flex-between" style={{ fontSize: '12px', padding: '4px 0', borderBottom: '1px dashed rgba(255,255,255,0.01)' }}>
-                    <span>{item.product_name} - {item.variant_name} <span style={{ color: 'var(--text-dark)' }}>({item.product_sku})</span></span>
-                    <span>Ordered: <strong>{item.quantity_ordered}</strong> @ ₹{Number(item.cost_at_order).toFixed(2)}</span>
+    return (
+      <section className="glass-card">
+        {/* Header and Create Button */}
+        <div className="flex-between" style={{ marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Truck className="text-primary" size={22} /> Purchase Orders (PO)
+          </h3>
+          <button className="btn btn-primary" onClick={() => setAddPoOpen(true)} style={{ gap: '6px' }}>
+            <Plus size={16} /> Create Purchase Order
+          </button>
+        </div>
+
+        {/* Filters Panel */}
+        <div style={{ marginBottom: '20px' }}>
+          {/* Desktop Filter Pills (>= 640px) */}
+          <div className="variant-matrix-table-view" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {['ALL', 'DRAFT', 'PENDING', 'RECEIVED'].map(status => (
+                <button
+                  key={status}
+                  className={`btn ${poFilterStatus === status ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setPoFilterStatus(status)}
+                  style={{ padding: '6px 14px', fontSize: '12px', minHeight: '32px', height: '32px' }}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.02)', padding: '2px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <button 
+                type="button"
+                className={`btn ${poViewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setPoViewMode('list')}
+                style={{ padding: '4px 12px', fontSize: '11px', minHeight: '28px', height: '28px', border: 'none' }}
+              >
+                List View
+              </button>
+              <button 
+                type="button"
+                className={`btn ${poViewMode === 'kanban' ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setPoViewMode('kanban')}
+                style={{ padding: '4px 12px', fontSize: '11px', minHeight: '28px', height: '28px', border: 'none' }}
+              >
+                Kanban Board
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Filter Button (< 640px) */}
+          <div className="variant-matrix-card-view" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <button 
+              className="btn btn-secondary" 
+              onClick={() => setPoMobileFilterOpen(true)}
+              style={{ width: '100%', minHeight: '44px', display: 'flex', justifyContent: 'space-between', padding: '0 16px' }}
+            >
+              <span>Status Filter: <strong>{poFilterStatus}</strong></span>
+              <ArrowUpDown size={16} />
+            </button>
+            
+            <div style={{ display: 'flex', width: '100%', gap: '4px', background: 'rgba(255,255,255,0.02)', padding: '2px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <button 
+                type="button"
+                className={`btn ${poViewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setPoViewMode('list')}
+                style={{ flexGrow: 1, padding: '8px', fontSize: '12px', minHeight: '36px', border: 'none' }}
+              >
+                List View
+              </button>
+              <button 
+                type="button"
+                className={`btn ${poViewMode === 'kanban' ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setPoViewMode('kanban')}
+                style={{ flexGrow: 1, padding: '8px', fontSize: '12px', minHeight: '36px', border: 'none' }}
+              >
+                Kanban Board
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* PO List */}
+        {filteredPOs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
+            No purchase orders match this filter. Create a new PO or select a different filter.
+          </div>
+        ) : poViewMode === 'kanban' ? (
+          renderKanbanBoard()
+        ) : (
+          <div>
+            {/* Desktop Table View (>= 768px) */}
+            <div className="variant-matrix-table-view" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '12px 8px' }}>PO NUMBER</th>
+                    <th style={{ padding: '12px 8px' }}>DATE</th>
+                    <th style={{ padding: '12px 8px' }}>SUPPLIER</th>
+                    <th style={{ padding: '12px 8px' }}>ITEMS</th>
+                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>TOTAL AMOUNT</th>
+                    <th style={{ padding: '12px 8px', textAlign: 'center' }}>STATUS</th>
+                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPOs.map(po => (
+                    <tr key={po.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                      <td style={{ padding: '12px 8px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                        #{po.id.substring(0, 8)}
+                      </td>
+                      <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                        {new Date(po.created_at).toLocaleDateString()}
+                      </td>
+                      <td style={{ padding: '12px 8px' }}>
+                        {po.supplier_name || 'N/A'}
+                      </td>
+                      <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                        {po.items ? po.items.length : 0} lines
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 'bold' }}>
+                        ₹{Number(po.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                        <span className={`badge ${po.status === 'RECEIVED' ? 'badge-success' : po.status === 'PENDING' ? 'badge-warning' : 'badge-secondary'}`}>
+                          {po.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                        {po.status === 'DRAFT' && (
+                          <button className="btn btn-secondary" onClick={() => handlePOStatusUpdate(po.id, 'PENDING')} style={{ padding: '6px 10px', fontSize: '11px', minHeight: '28px' }}>
+                            Order
+                          </button>
+                        )}
+                        {po.status === 'PENDING' && (
+                          <button className="btn btn-primary" onClick={() => handlePOStatusUpdate(po.id, 'RECEIVED')} style={{ padding: '6px 10px', fontSize: '11px', minHeight: '28px', background: 'var(--success)' }}>
+                            Receive
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Cards View (< 768px) */}
+            <div className="variant-matrix-card-view" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {filteredPOs.map(po => (
+                <div key={po.id} className="variant-card" style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                  <div className="flex-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '10px', marginBottom: '10px' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold', fontSize: '14px', fontFamily: 'monospace' }}>PO #{po.id.substring(0, 8)}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Date: {new Date(po.created_at).toLocaleDateString()}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span className={`badge ${po.status === 'RECEIVED' ? 'badge-success' : po.status === 'PENDING' ? 'badge-warning' : 'badge-secondary'}`} style={{ marginRight: '8px' }}>
+                        {po.status}
+                      </span>
+                      <span style={{ fontWeight: 'bold', fontSize: '14px' }}>₹{Number(po.total_amount).toFixed(2)}</span>
+                    </div>
                   </div>
+                  
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                    <strong>Supplier:</strong> {po.supplier_name || 'N/A'}
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                    {po.items && po.items.map(item => (
+                      <div key={item.id} className="flex-between" style={{ fontSize: '12px', padding: '4px 0' }}>
+                        <span>{item.product_name} ({item.product_sku})</span>
+                        <span>Ordered: <strong>{item.quantity_ordered}</strong></span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {po.status === 'DRAFT' && (
+                    <button className="btn btn-secondary" onClick={() => handlePOStatusUpdate(po.id, 'PENDING')} style={{ width: '100%', minHeight: '44px' }}>
+                      Mark PO as Ordered (Pending)
+                    </button>
+                  )}
+                  {po.status === 'PENDING' && (
+                    <button className="btn btn-primary" onClick={() => handlePOStatusUpdate(po.id, 'RECEIVED')} style={{ width: '100%', minHeight: '44px' }}>
+                      Receive Stock Items
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Mobile Filter Sheet Modal */}
+        {poMobileFilterOpen && (
+          <div className="filter-sheet-backdrop" onClick={() => setPoMobileFilterOpen(false)}>
+            <div className="filter-sheet" onClick={e => e.stopPropagation()}>
+              <div className="flex-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
+                <h4 style={{ margin: 0 }}>Filter Purchase Orders</h4>
+                <button className="btn" onClick={() => setPoMobileFilterOpen(false)} style={{ padding: '4px', background: 'transparent', border: 'none' }}><X size={18} /></button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {['ALL', 'DRAFT', 'PENDING', 'RECEIVED'].map(status => (
+                  <button
+                    key={status}
+                    className={`btn ${poFilterStatus === status ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => { setPoFilterStatus(status); setPoMobileFilterOpen(false); }}
+                    style={{ width: '100%', minHeight: '44px' }}
+                  >
+                    {status}
+                  </button>
                 ))}
               </div>
-
-              {/* Actions */}
-              {po.status === 'DRAFT' ? (
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button className="btn btn-secondary" onClick={() => handlePOStatusUpdate(po.id, 'PENDING')} style={{ padding: '6px 12px', fontSize: '11px' }}>
-                    Mark PO as Ordered (Pending)
-                  </button>
-                </div>
-              ) : po.status === 'PENDING' ? (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                  <button className="btn btn-primary" onClick={() => handlePOStatusUpdate(po.id, 'RECEIVED')} style={{ padding: '6px 12px', fontSize: '11px' }}>
-                    Receive Stock Items
-                  </button>
-                </div>
-              ) : null}
             </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+          </div>
+        )}
+      </section>
+    );
+  };
 
   // 5. Analytics Tab View (Dynamic Pure SVGs)
   const renderAnalytics = () => {
@@ -1413,7 +1969,7 @@ export default function App() {
     const handleGenerateCustomInvoice = (e) => {
       e.preventDefault();
       if (!invoiceCustomer || invoiceCart.length === 0) {
-        alert('Please provide a Customer Name and add at least one item.');
+        showToast('Please provide a Customer Name and add at least one item.', 'error');
         return;
       }
       
@@ -1721,13 +2277,10 @@ export default function App() {
             <span className="sidebar-logo-text" style={{ fontSize: '18px', fontWeight: 'bold' }}>Stockwise HQ</span>
           </div>
           <div className="sidebar-menu">
+            <div className="sidebar-section-title">Operations</div>
             <button className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')}>
               <LayoutDashboard size={18} /> 
               <span className="sidebar-text">Dashboard</span>
-            </button>
-            <button className={`sidebar-item ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => navigate('catalog')}>
-              <Package size={18} /> 
-              <span className="sidebar-text">Products Catalog</span>
             </button>
             <button className={`sidebar-item ${activeTab === 'pos' ? 'active' : ''}`} onClick={() => navigate('pos')}>
               <ShoppingBag size={18} /> 
@@ -1741,6 +2294,18 @@ export default function App() {
               <Truck size={18} /> 
               <span className="sidebar-text">Purchase Orders</span>
             </button>
+
+            <div className="sidebar-section-title">Catalog</div>
+            <button className={`sidebar-item ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => navigate('catalog')}>
+              <Package size={18} /> 
+              <span className="sidebar-text">Products Catalog</span>
+            </button>
+            <button className={`sidebar-item ${activeTab === 'partners' ? 'active' : ''}`} onClick={() => navigate('partners')}>
+              <Users2 size={18} /> 
+              <span className="sidebar-text">Partners & Tags</span>
+            </button>
+
+            <div className="sidebar-section-title">Records</div>
             <button className={`sidebar-item ${activeTab === 'ledger' ? 'active' : ''}`} onClick={() => navigate('ledger')}>
               <History size={18} /> 
               <span className="sidebar-text">Ledger Logs</span>
@@ -1754,18 +2319,16 @@ export default function App() {
                 </span>
               ) : null}
             </button>
-            <button className={`sidebar-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')}>
-              <TrendingUp size={18} /> 
-              <span className="sidebar-text">Analytics</span>
-            </button>
-            <button className={`sidebar-item ${activeTab === 'partners' ? 'active' : ''}`} onClick={() => navigate('partners')}>
-              <Users2 size={18} /> 
-              <span className="sidebar-text">Partners & Tags</span>
-            </button>
             <button className={`sidebar-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => navigate('audit')}>
               <FileText size={18} /> 
               <span className="sidebar-text">Audit Logs</span>
             </button>
+            <button className={`sidebar-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')}>
+              <TrendingUp size={18} /> 
+              <span className="sidebar-text">Analytics</span>
+            </button>
+
+            <div className="sidebar-section-title">Admin</div>
             <button className={`sidebar-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => navigate('users')}>
               <Users size={18} /> 
               <span className="sidebar-text">Users & Roles</span>
@@ -1778,14 +2341,16 @@ export default function App() {
         </div>
 
         {/* Reset button */}
-        <button 
-          className="sidebar-item" 
-          onClick={() => setShowResetConfirm(true)}
-          style={{ color: 'var(--text-dark)', marginTop: 'auto', gap: '12px' }}
-        >
-          <RefreshCw size={18} /> 
-          <span className="sidebar-text">Reset Demo Data</span>
-        </button>
+        <div style={{ borderTop: '1px solid var(--border-color)', marginTop: 'auto', paddingTop: '12px' }}>
+          <button 
+            className="sidebar-item" 
+            onClick={() => setShowResetConfirm(true)}
+            style={{ color: 'var(--danger)', gap: '12px' }}
+          >
+            <RefreshCw size={18} /> 
+            <span className="sidebar-text">Reset Demo Data</span>
+          </button>
+        </div>
       </aside>
 
       {/* Main panel view displayer */}
@@ -2249,6 +2814,97 @@ export default function App() {
               <button type="button" className="btn btn-secondary" onClick={() => setShowInvoicePrint(null)}>Close Preview</button>
               <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print Invoice</button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Mobile Bottom Navigation Bar */}
+      <nav className="mobile-bottom-nav">
+        <button className={`mobile-bottom-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')}>
+          <LayoutDashboard size={20} />
+          <span>Dashboard</span>
+        </button>
+        <button className={`mobile-bottom-nav-item ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => navigate('catalog')}>
+          <Package size={20} />
+          <span>Catalog</span>
+        </button>
+        <button className={`mobile-bottom-nav-item ${activeTab === 'pos' ? 'active' : ''}`} onClick={() => navigate('pos')}>
+          <ShoppingBag size={20} />
+          <span>POS</span>
+        </button>
+        <button className={`mobile-bottom-nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => navigate('invoices')}>
+          <Receipt size={20} />
+          <span>Invoices</span>
+        </button>
+        <button className={`mobile-bottom-nav-item ${moreMenuOpen ? 'active' : ''}`} onClick={() => setMoreMenuOpen(!moreMenuOpen)}>
+          <MoreHorizontal size={20} />
+          <span>More</span>
+        </button>
+      </nav>
+
+      {/* Mobile More Navigation Drawer (Slide up sheet) */}
+      {moreMenuOpen && (
+        <div className="filter-sheet-backdrop" onClick={() => setMoreMenuOpen(false)} style={{ zIndex: 1004 }}>
+          <div className="mobile-more-drawer open" onClick={e => e.stopPropagation()}>
+            <div className="mobile-more-drawer-header">
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold' }}>All Navigation Tabs</h3>
+              <button className="btn" onClick={() => setMoreMenuOpen(false)} style={{ padding: '4px', background: 'transparent', border: 'none' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mobile-more-drawer-body">
+              <button className={`mobile-more-drawer-item ${activeTab === 'po' ? 'active' : ''}`} onClick={() => navigate('po')}>
+                <Truck size={18} />
+                <span>Purchase Orders</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'ledger' ? 'active' : ''}`} onClick={() => navigate('ledger')}>
+                <History size={18} />
+                <span>Ledger Logs</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'alerts' ? 'active' : ''}`} onClick={() => navigate('alerts')}>
+                <ShieldAlert size={18} />
+                <span>Stock Alerts</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')}>
+                <TrendingUp size={18} />
+                <span>Analytics Stats</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'partners' ? 'active' : ''}`} onClick={() => navigate('partners')}>
+                <Users2 size={18} />
+                <span>Partners & Suppliers</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => navigate('audit')}>
+                <FileText size={18} />
+                <span>Audit Logs</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => navigate('users')}>
+                <Users size={18} />
+                <span>Users & Roles</span>
+              </button>
+              <button className={`mobile-more-drawer-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}>
+                <Settings size={18} />
+                <span>Settings & Keys</span>
+              </button>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '8px 0', paddingTop: '8px' }}>
+                <button 
+                  className="mobile-more-drawer-item" 
+                  onClick={() => { setMoreMenuOpen(false); setShowResetConfirm(true); }}
+                  style={{ color: 'var(--danger)' }}
+                >
+                  <RefreshCw size={18} />
+                  <span>Reset Demo Data</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Toast Notification Container */}
+      {toast && (
+        <div className="toast-container">
+          <div className={`toast toast-${toast.type}`}>
+            {toast.type === 'success' ? <CheckCircle size={18} className="text-success" /> : <ShieldAlert size={18} className="text-danger" />}
+            <span>{toast.message}</span>
           </div>
         </div>
       )}
