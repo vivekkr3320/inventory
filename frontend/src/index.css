@@ -482,3 +482,205 @@ label {
     color: #000 !important;
   }
 }
+
+/* Responsive Add Product Modal Styles */
+.responsive-modal-container {
+  display: flex;
+  flex-direction: column;
+  background: #0d0d12 !important; /* solid opaque dark background */
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 850px;
+  max-height: 90vh;
+  overflow: hidden;
+  z-index: 1010;
+}
+
+.responsive-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111116;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.responsive-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.responsive-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+.responsive-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.responsive-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111116;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+}
+
+/* Ingestion buttons and grids */
+.ingestion-btn-container {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+.parent-details-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+/* Inputs styling with better contrast */
+.responsive-modal-body input, 
+.responsive-modal-body select, 
+.responsive-modal-body textarea {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important; /* clear borders */
+  color: #fff !important;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.responsive-modal-body input:focus, 
+.responsive-modal-body select:focus, 
+.responsive-modal-body textarea:focus {
+  border-color: var(--primary) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.modal-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.010em;
+  margin: 0;
+}
+
+.modal-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+  display: block;
+}
+
+/* Variant Matrix Card (Mobile View) vs Table (Desktop View) */
+.variant-matrix-card-view {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.variant-matrix-table-view {
+  display: block;
+  width: 100%;
+}
+
+.variant-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 16px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.variant-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 8px;
+}
+
+.variant-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+/* Mobile responsive media queries */
+@media (max-width: 768px) {
+  .variant-matrix-card-view {
+    display: flex;
+  }
+  .variant-matrix-table-view {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .responsive-modal-container {
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+    border: none;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  
+  .responsive-modal-header {
+    padding: 16px 20px;
+  }
+  
+  .responsive-modal-body {
+    padding: 20px;
+  }
+  
+  .responsive-modal-footer {
+    padding: 12px 20px;
+  }
+  
+  .parent-details-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  
+  .ingestion-btn-container {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  
+  .ingestion-btn-container button {
+    width: 100%;
+    min-height: 48px; /* >44px tap target */
+  }
+
+  .responsive-modal-footer button {
+    flex-grow: 1;
+    min-height: 44px;
+  }
+  
+  .add-variant-btn {
+    width: 100% !important;
+  }
+}
