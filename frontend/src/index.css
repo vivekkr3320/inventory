@@ -1060,3 +1060,34 @@ label {
   flex-grow: 1;
   gap: 12px;
 }
+
+.app-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  padding-bottom: 16px;
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    background: #09090b;
+    margin: -20px -16px 24px -16px !important;
+    padding: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 998;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: center !important;
+    align-items: center;
+  }
+  .app-header h2 {
+    font-size: 14px !important;
+    text-align: center;
+    font-weight: 700;
+  }
+  .app-header div {
+    display: none !important;
+  }
+  .btn {
+    min-height: 44px !important;
+  }
+}

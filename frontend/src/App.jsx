@@ -2355,7 +2355,7 @@ export default function App() {
 
       {/* Main panel view displayer */}
       <main className="main-content">
-        <header className="flex-between" style={{ marginBottom: '32px' }}>
+        <header className="app-header flex-between" style={{ marginBottom: '32px' }}>
           <h2 style={{ margin: 0, textTransform: 'capitalize', fontFamily: 'Outfit' }}>
             {activeTab === 'pos' ? 'POS Billing Checkout' : activeTab === 'invoices' ? 'Invoice Management & Generator' : activeTab === 'po' ? 'Purchase Orders' : activeTab === 'alerts' ? 'Active Stock Alerts' : activeTab === 'partners' ? 'Partners & Suppliers' : activeTab === 'audit' ? 'System Audit logs' : `${activeTab} view`}
           </h2>
